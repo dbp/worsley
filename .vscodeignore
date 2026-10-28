@@ -1,0 +1,16 @@
+# Only dist/, media/, package.json, README.md and LICENSE ship.
+.vscode/**
+.vscode-test/**
+.gitignore
+src/**
+test/**
+out/**
+node_modules/**
+**/*.map
+**/*.ts
+tsconfig.json
+esbuild.config.mjs
+pnpm-lock.yaml
+*.vsix
+samples/**
+live-results/**

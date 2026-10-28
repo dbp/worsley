@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+*.vsix
+# The VS Code that test-electron downloads, and the integration test's workspace.
+.vscode-test/
+__pycache__/
+# What test/live/suite.ts writes.
+live-results/

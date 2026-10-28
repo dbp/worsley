@@ -1,0 +1,321 @@
+{
+  "name": "worsley",
+  "displayName": "Worsley",
+  "description": "An LLM that points you at the code: ask about a selection, change it across the codebase with the tests kept passing, or take a step-by-step tour. Works with a local llama.cpp server or OpenRouter.",
+  "version": "0.1.0",
+  "publisher": "worsley",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Worsley runs the workspace's test command and sends its code to a language model."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Worsley reads and writes files on disk and runs commands in the workspace folder."
+    }
+  },
+  "packageManager": "pnpm@10.33.2",
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "llm",
+    "llama.cpp",
+    "openrouter",
+    "code reading",
+    "tour"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "worsley.ask",
+        "title": "Ask About This Code…",
+        "category": "Worsley",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "worsley.change",
+        "title": "Change This Code…",
+        "category": "Worsley",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "worsley.tour",
+        "title": "Tour the Codebase",
+        "category": "Worsley",
+        "icon": "$(milestone)"
+      },
+      {
+        "command": "worsley.newThread",
+        "title": "New Thread",
+        "category": "Worsley",
+        "icon": "$(add)"
+      },
+      {
+        "command": "worsley.stop",
+        "title": "Stop",
+        "category": "Worsley",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "worsley.pickBackend",
+        "title": "Choose Model…",
+        "category": "Worsley",
+        "icon": "$(server-environment)"
+      },
+      {
+        "command": "worsley.setApiKey",
+        "title": "Set API Key…",
+        "category": "Worsley",
+        "icon": "$(key)"
+      },
+      {
+        "command": "worsley.allowedCommands",
+        "title": "Allowed Commands…",
+        "category": "Worsley",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "worsley.clearHighlights",
+        "title": "Clear Highlights",
+        "category": "Worsley",
+        "icon": "$(clear-all)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "worsley.ask",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "worsley.change",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "editorTextFocus"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "worsley.ask",
+          "group": "worsley@1"
+        },
+        {
+          "command": "worsley.change",
+          "group": "worsley@2"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "worsley.tour",
+          "when": "view == worsley.panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "worsley.newThread",
+          "when": "view == worsley.panel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "worsley.pickBackend",
+          "when": "view == worsley.panel",
+          "group": "settings@1"
+        },
+        {
+          "command": "worsley.setApiKey",
+          "when": "view == worsley.panel",
+          "group": "settings@2"
+        },
+        {
+          "command": "worsley.allowedCommands",
+          "when": "view == worsley.panel",
+          "group": "settings@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "worsley.stop",
+          "when": "worsley.busy"
+        },
+        {
+          "command": "worsley.clearHighlights",
+          "when": "worsley.highlighting"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "worsley",
+          "title": "Worsley",
+          "icon": "media/worsley.svg"
+        }
+      ]
+    },
+    "views": {
+      "worsley": [
+        {
+          "id": "worsley.panel",
+          "name": "Worsley",
+          "type": "webview"
+        }
+      ]
+    },
+    "colors": [
+      {
+        "id": "worsley.highlightBackground",
+        "description": "Background of the lines Worsley is pointing at.",
+        "defaults": {
+          "dark": "#e5c07b26",
+          "light": "#f2c94c40",
+          "highContrast": "#e5c07b40",
+          "highContrastLight": "#f2c94c60"
+        }
+      },
+      {
+        "id": "worsley.highlightBorder",
+        "description": "Gutter mark beside the lines Worsley is pointing at.",
+        "defaults": {
+          "dark": "#e5c07b",
+          "light": "#c99a06",
+          "highContrast": "#e5c07b",
+          "highContrastLight": "#9a7400"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "Worsley",
+      "properties": {
+        "worsley.backends": {
+          "type": "array",
+          "scope": "machine",
+          "markdownDescription": "The models Worsley can use. Each is an OpenAI-compatible chat endpoint: `name`, `baseUrl` (ending in `/v1`, or `/api/v1` for OpenRouter), `model`, and optionally `apiKeyEnv` (an environment variable holding the key; **Worsley: Set API Key…** stores one instead), `headers`, `extraBody` (merged into every request, such as `{\"chat_template_kwargs\": {\"enable_thinking\": false}}` to turn a Qwen model's thinking off on llama.cpp), and `changeExtraBody` (merged over `extraBody` for Change requests only: the `local` backend thinks when it changes code, and not when it answers). This can be set only in user settings, so a workspace can't send your code somewhere else.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "baseUrl",
+              "model"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "baseUrl": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "apiKeyEnv": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "extraBody": {
+                "type": "object"
+              },
+              "changeExtraBody": {
+                "type": "object"
+              }
+            }
+          },
+          "default": [
+            {
+              "name": "local",
+              "baseUrl": "http://127.0.0.1:8080/v1",
+              "model": "Qwen3.6-35B-A3B-Q4_K_M",
+              "extraBody": {
+                "chat_template_kwargs": {
+                  "enable_thinking": false
+                }
+              },
+              "changeExtraBody": {
+                "chat_template_kwargs": {
+                  "enable_thinking": true
+                }
+              }
+            },
+            {
+              "name": "openrouter",
+              "baseUrl": "https://openrouter.ai/api/v1",
+              "model": "anthropic/claude-sonnet-5.5",
+              "apiKeyEnv": "OPENROUTER_API_KEY"
+            }
+          ]
+        },
+        "worsley.backend": {
+          "type": "string",
+          "scope": "machine",
+          "default": "local",
+          "markdownDescription": "The `name` of the entry in `#worsley.backends#` to use. **Worsley: Choose Model…** changes it."
+        },
+        "worsley.testCommand": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The command that runs this workspace's tests, such as `pytest -q` or `npm test`. When Worsley changes code it runs this without asking; any other command needs your approval, which can cover a class of commands such as `cargo test …` (**Worsley: Allowed Commands…** lists them). Empty: Worsley works out how the tests run and asks before running anything."
+        },
+        "worsley.commandTimeoutSeconds": {
+          "type": "number",
+          "default": 600,
+          "minimum": 5,
+          "markdownDescription": "How long a command Worsley runs may take before it is stopped."
+        },
+        "worsley.context.maxFileLines": {
+          "type": "number",
+          "default": 600,
+          "minimum": 0,
+          "markdownDescription": "A visible file of at most this many lines is sent whole with each message; a longer one is sent as the lines on screen, with some around them. Selections are always sent."
+        },
+        "worsley.maxToolRounds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 1,
+          "markdownDescription": "How many rounds of tool calls one request may take before Worsley stops it."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc -p . && tsc -p test",
+    "package": "node esbuild.config.mjs --production",
+    "vscode:prepublish": "pnpm run package",
+    "vsce:package": "vsce package --no-dependencies --allow-missing-repository",
+    "test": "node esbuild.config.mjs --tests && node --test \"out/test/unit/*.test.js\"",
+    "test:integration": "node esbuild.config.mjs && node esbuild.config.mjs --tests && node out/test/integration/run.js",
+    "live": "node esbuild.config.mjs --tests && node out/test/live/run.js"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/vscode": "1.101.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.28.0",
+    "markdown-it": "14.3.0",
+    "typescript": "6.0.3"
+  },
+  "vsce": {
+    "dependencies": false
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

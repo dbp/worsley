@@ -1,0 +1,68 @@
+/* The variables VS Code gives a webview, from Dark Modern and Light Modern. */
+
+html {
+  --vscode-font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, "Droid Sans", sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-editor-font-family: "Droid Sans Mono", "DejaVu Sans Mono", monospace;
+  --vscode-editor-font-size: 14px;
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-errorForeground: #f85149;
+  --vscode-sideBar-background: #181818;
+  --vscode-input-background: #313131;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-border: #3c3c3c;
+  --vscode-input-placeholderForeground: #989898;
+  --vscode-focusBorder: #0078d4;
+  --vscode-button-background: #0078d4;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #026ec1;
+  --vscode-button-border: #ffffff12;
+  --vscode-button-secondaryBackground: #313131;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #3c3c3c;
+  --vscode-textLink-foreground: #4daafc;
+  --vscode-textCodeBlock-background: #2b2b2b;
+  --vscode-widget-border: #313131;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-editorWidget-background: #202020;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-toolbar-hoverBackground: #5a5d5e50;
+  --vscode-editorWarning-foreground: #cca700;
+  --vscode-inputValidation-warningBorder: #b89500;
+  --vscode-dropdown-background: #313131;
+  --vscode-dropdown-foreground: #cccccc;
+  --vscode-dropdown-border: #3c3c3c;
+  --vscode-progressBar-background: #0078d4;
+  background: var(--vscode-sideBar-background);
+}
+
+html.light {
+  --vscode-foreground: #3b3b3b;
+  --vscode-descriptionForeground: #3b3b3b;
+  --vscode-errorForeground: #f85149;
+  --vscode-sideBar-background: #f8f8f8;
+  --vscode-input-background: #ffffff;
+  --vscode-input-foreground: #3b3b3b;
+  --vscode-input-border: #cecece;
+  --vscode-input-placeholderForeground: #767676;
+  --vscode-focusBorder: #005fb8;
+  --vscode-button-background: #005fb8;
+  --vscode-button-hoverBackground: #0258a8;
+  --vscode-button-border: #0000001a;
+  --vscode-button-secondaryBackground: #e5e5e5;
+  --vscode-button-secondaryForeground: #3b3b3b;
+  --vscode-button-secondaryHoverBackground: #cccccc;
+  --vscode-textLink-foreground: #005fb8;
+  --vscode-textCodeBlock-background: #f8f8f8;
+  --vscode-widget-border: #e5e5e5;
+  --vscode-panel-border: #e5e5e5;
+  --vscode-editorWidget-background: #f8f8f8;
+  --vscode-list-hoverBackground: #f2f2f2;
+  --vscode-toolbar-hoverBackground: #b8b8b850;
+  --vscode-editorWarning-foreground: #bf8803;
+  --vscode-inputValidation-warningBorder: #bf8803;
+  --vscode-dropdown-background: #ffffff;
+  --vscode-dropdown-foreground: #3b3b3b;
+  --vscode-dropdown-border: #cecece;
+}

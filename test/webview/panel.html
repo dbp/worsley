@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Worsley panel</title>
+<!--
+  The panel outside VS Code, for working on how it looks: the real script and
+  stylesheet, a stand-in for the VS Code API, theme colours copied from Dark
+  Modern (or Light Modern with ?theme=light), and demo.js playing a thread.
+  Serve it with `node test/webview/serve.mjs`.
+-->
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="/media/panel.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="demo.js"></script>
+<script src="/dist/webview.js"></script>
+</body>
+</html>
