@@ -37,8 +37,12 @@ const mac = navigator.userAgent.includes("Mac");
 const keys = (key: string): string => (mac ? `⌘⌥${key}` : `Ctrl+Alt+${key}`);
 
 const app = document.getElementById("app") as HTMLElement;
-const tourBar = h("div", { id: "tour", hidden: true });
-const thread = h("main", { id: "thread" });
+// The thread and the tour bar take focus when clicked, so that text selected
+// in them can be copied. Before VS Code copies from a page that has no
+// element focused, it gives focus back to the last one that had it, usually
+// the message box, and the selection is lost.
+const tourBar = h("div", { id: "tour", hidden: true, tabindex: "-1" });
+const thread = h("main", { id: "thread", tabindex: "-1" });
 const empty = h(
   "div",
   { id: "empty" },
@@ -101,7 +105,15 @@ const ICONS: Record<ToolIcon, string> = {
 
 function details(itemId: string, name: string, summary: Child, body: Node, className?: string): HTMLDetailsElement {
   const key = `${itemId}:${name}`;
-  const el = h("details", { className, open: openDetails.has(key) }, h("summary", {}, summary), body);
+  const head = h("summary", {}, summary);
+  // Selecting the summary's text, to copy it, shouldn't open or close it.
+  head.addEventListener("click", (event) => {
+    const selection = window.getSelection();
+    if (selection !== null && !selection.isCollapsed && head.contains(selection.anchorNode)) {
+      event.preventDefault();
+    }
+  });
+  const el = h("details", { className, open: openDetails.has(key) }, head, body);
   el.addEventListener("toggle", () => {
     if (el.open) {
       openDetails.add(key);
@@ -110,6 +122,11 @@ function details(itemId: string, name: string, summary: Child, body: Node, class
     }
   });
   return el;
+}
+
+/** Copies through the extension, which can always reach the clipboard. */
+function copyButton(text: string): HTMLButtonElement {
+  return h("button", { className: "link-button copy", "data-action": "copy", "data-copy": text, title: "Copy this to the clipboard" }, "Copy");
 }
 
 function draw(item: Item): HTMLElement {
@@ -165,6 +182,7 @@ function draw(item: Item): HTMLElement {
         h("span", { className: "tool-icon", "aria-hidden": "true" }, ICONS[item.icon] ?? "•"),
         h("span", { className: "tool-summary" }, summary),
         item.diffPath !== undefined && h("button", { className: "link-button", "data-action": "diff", "data-path": item.diffPath, title: "Open the git diff" }, "diff"),
+        item.status === "failed" && copyButton(item.detail !== undefined && item.detail !== item.summary ? `${item.summary}\n\n${item.detail}` : item.summary),
       );
       return h(
         "div",
@@ -252,7 +270,7 @@ function draw(item: Item): HTMLElement {
         ),
       );
     case "notice":
-      return h("div", { className: `item notice ${item.level}` }, item.text);
+      return h("div", { className: `item notice ${item.level}` }, h("span", {}, item.text), item.level !== "info" && copyButton(item.text));
   }
 }
 
@@ -472,6 +490,13 @@ document.addEventListener("click", (event) => {
         return;
       case "start-tour":
         send({ type: "startTour" });
+        return;
+      case "copy":
+        send({ type: "copy", text: data.copy ?? "" });
+        action.textContent = "Copied";
+        setTimeout(() => {
+          action.textContent = "Copy";
+        }, 1500);
         return;
       case "tour-end":
         send({ type: "tourEnd" });

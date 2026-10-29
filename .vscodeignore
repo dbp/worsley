@@ -13,4 +13,5 @@ esbuild.config.mjs
 pnpm-lock.yaml
 *.vsix
 samples/**
+scripts/**
 live-results/**

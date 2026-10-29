@@ -175,6 +175,12 @@ kbd {
   gap: 8px;
 }
 
+/* They take focus only so that a selection in them survives copying. */
+#thread:focus,
+#tour:focus {
+  outline: none;
+}
+
 #empty {
   margin: auto 0;
   padding: 8px 4px;
@@ -450,6 +456,22 @@ code.code-link {
   color: var(--vscode-errorForeground);
 }
 
+/* An error is shown whole, to be read and copied. */
+.item.tool.failed .tool-summary {
+  white-space: normal;
+}
+
+button.copy {
+  flex: none;
+  margin-left: 6px;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+button.copy:hover {
+  color: var(--link);
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.3;
@@ -596,8 +618,15 @@ code.code-link {
 }
 
 .item.notice {
+  display: flex;
+  align-items: baseline;
   font-size: 0.9em;
   color: var(--muted);
+}
+
+.item.notice > span {
+  flex: 1;
+  min-width: 0;
 }
 
 .item.notice.warning {

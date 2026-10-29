@@ -1,7 +1,8 @@
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { runAgent, type AgentHooks } from "../../src/core/agent";
-import { chatTurn, mergeBodies, type ChatMessage, type Endpoint } from "../../src/core/chat";
+import { chatTurn, contextWindowOf, mergeBodies, type ChatMessage, type Endpoint } from "../../src/core/chat";
+import { TokenGauge, withRoom, type Compaction } from "../../src/core/compact";
 import { formatContext, type EditorFile } from "../../src/core/context";
 import { errorText } from "../../src/core/errorText";
 import * as fs from "node:fs";
@@ -31,7 +32,8 @@ import { DiskWorkspace } from "../unit/helpers";
  * Change requests). `--select shop/cart.py:25-28` sends the request with that
  * selection, and its file on screen, as the extension would. `--json-out`
  * writes what happened as JSON: times, tokens, tool calls, the tour, and
- * which of the replies' links lead nowhere.
+ * which of the replies' links lead nowhere. Room is made in the thread as
+ * in the extension, in the window the server reports, or `--context N`.
  */
 
 const { values, positionals } = parseArgs({
@@ -50,6 +52,7 @@ const { values, positionals } = parseArgs({
     steps: { type: "boolean", default: false },
     select: { type: "string", multiple: true, default: [] },
     "json-out": { type: "string" },
+    context: { type: "string" },
     help: { type: "boolean", default: false },
   },
 });
@@ -58,7 +61,7 @@ const root = path.resolve(values.root);
 const mode = values.mode as Mode;
 const question = positionals.join(" ").trim();
 if (values.help || question === "" || (mode !== "ask" && mode !== "change")) {
-  console.error('Usage: run.js [--root DIR] [--mode ask|change] [--model ID] [--base-url URL] [--key-env VAR] [--extra JSON] [--change-extra JSON] [--test-command CMD] [--yes] [--steps] [--select PATH:START-END] [--json-out FILE] "question"');
+  console.error('Usage: run.js [--root DIR] [--mode ask|change] [--model ID] [--base-url URL] [--key-env VAR] [--extra JSON] [--change-extra JSON] [--test-command CMD] [--yes] [--steps] [--select PATH:START-END] [--json-out FILE] [--context TOKENS] "question"');
   process.exit(values.help ? 0 : 64);
 }
 const endpoint: Endpoint = {
@@ -101,7 +104,11 @@ const report = {
   tour: undefined as TourPlan | undefined,
   locations: [] as { title: string; places: Place[] }[],
   commands: [] as string[],
+  window: undefined as number | undefined,
+  compactions: [] as Compaction[],
 };
+
+const gauge = new TokenGauge();
 
 let tour: TourPlan | undefined;
 const ui: ToolUi = {
@@ -127,6 +134,8 @@ const ui: ToolUi = {
 };
 
 async function main(): Promise<void> {
+  report.window = values.context !== undefined ? Number(values.context) : await contextWindowOf(endpoint, AbortSignal.timeout(10_000));
+  say(`  · context window: ${report.window ?? "not reported"}`);
   const workspace = new DiskWorkspace(root);
   const files = await workspace.listFiles();
   const messages: ChatMessage[] = [
@@ -263,8 +272,20 @@ async function request(workspace: DiskWorkspace, messages: ChatMessage[], reques
     },
   };
   const end = await runAgent({
-    chat: (m, t, h, s) =>
-      chatTurn({ ...endpoint, extraBody: requestMode === "change" ? mergeBodies(endpoint.extraBody, changeExtraBody) : endpoint.extraBody }, m, t, h, s),
+    chat: withRoom(
+      (m, t, h, s) => chatTurn({ ...endpoint, extraBody: requestMode === "change" ? mergeBodies(endpoint.extraBody, changeExtraBody) : endpoint.extraBody }, m, t, h, s),
+      {
+        window: () => report.window,
+        learnWindow: (tokens) => {
+          report.window = tokens;
+        },
+        gauge,
+        made: (compaction) => {
+          report.compactions.push(compaction);
+          say(`  ▸ made room: about ${compaction.before} → ${compaction.after} tokens, ${compaction.cleared} results cleared${compaction.summarized ? ", the earlier requests summarized" : ""}`);
+        },
+      },
+    ),
     messages,
     tools: TOOLS,
     maxRounds: Number(values["max-rounds"]),

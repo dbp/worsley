@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, describe, it } from "node:test";
-import { chatTurn, listModels, mergeBodies, toolCallsInText, type ChatMessage, type Endpoint } from "../../src/core/chat";
+import { asOverflow, chatTurn, ContextOverflowError, contextWindowOf, listModels, mergeBodies, toolCallsInText, type ChatMessage, type Endpoint } from "../../src/core/chat";
 import { startFakeModel } from "../fakeModel";
 
 const messages: ChatMessage[] = [
@@ -197,6 +197,86 @@ describe("a streamed chat turn", () => {
       { id: "a/tools", detail: "" },
       { id: "local", detail: "loaded" },
     ]);
+  });
+});
+
+describe("a prompt too long for the model", () => {
+  it("is recognised in each server's words, with the sizes they give", () => {
+    const llama = { error: { code: 400, message: "request (1283602 tokens) exceeds the available context size (262144 tokens), try increasing it", type: "exceed_context_size_error", n_prompt_tokens: 1283602, n_ctx: 262144 } };
+    const fromLlama = asOverflow(`x answered 400: ${llama.error.message}`, llama);
+    assert.deepEqual([fromLlama?.limit, fromLlama?.promptTokens], [262144, 1283602]);
+    const openai = asOverflow("This endpoint's maximum context length is 131,072 tokens. However, you requested about 140000 tokens (139000 of text input).", undefined);
+    assert.deepEqual([openai?.limit, openai?.promptTokens], [131072, 140000]);
+    const anthropic = asOverflow("prompt is too long: 210000 tokens > 200000 maximum", undefined);
+    assert.deepEqual([anthropic?.limit, anthropic?.promptTokens], [200000, 210000]);
+    const bare = asOverflow("context_length_exceeded", undefined);
+    assert.ok(bare instanceof ContextOverflowError);
+    assert.deepEqual([bare.limit, bare.promptTokens], [undefined, undefined]);
+    assert.equal(asOverflow("Rate limit exceeded: try again in 20s", undefined), undefined);
+  });
+
+  it("makes chatTurn fail with a ContextOverflowError", async () => {
+    const server = await rawServer((_req, res) => {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end('{"error":{"code":400,"message":"request (9000 tokens) exceeds the available context size (8192 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":9000,"n_ctx":8192}}');
+    });
+    try {
+      await assert.rejects(
+        chatTurn({ baseUrl: server.url, model: "m" }, messages, [], {}, new AbortController().signal),
+        (err: unknown) => err instanceof ContextOverflowError && err.limit === 8192 && err.promptTokens === 9000 && /answered 400: request \(9000 tokens\)/.test(err.message),
+      );
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("a model's context window", () => {
+  it("comes from its entry in /models: the running size first, then the model's", async () => {
+    const server = await rawServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          data: [
+            { id: "loaded", context_length: 262144, meta: { n_ctx: 131072 } },
+            { id: "routed", context_length: 1000000, top_provider: { context_length: 163840 } },
+            { id: "listed", context_length: 32768 },
+            { id: "bare" },
+          ],
+        }),
+      );
+      void req;
+    });
+    try {
+      const window = (model: string): Promise<number | undefined> => contextWindowOf({ baseUrl: server.url, model }, new AbortController().signal);
+      assert.equal(await window("loaded"), 131072);
+      assert.equal(await window("routed"), 163840);
+      assert.equal(await window("listed"), 32768);
+      assert.equal(await window("bare"), undefined);
+      assert.equal(await window("unknown"), undefined);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("comes from llama.cpp's /props when /models doesn't say", async () => {
+    const asked: string[] = [];
+    const server = await rawServer((req, res) => {
+      asked.push(req.url ?? "");
+      if (req.url?.startsWith("/props")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end('{"default_generation_settings":{"n_ctx":16384}}');
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    try {
+      assert.equal(await contextWindowOf({ baseUrl: server.url, model: "a b" }, new AbortController().signal), 16384);
+      assert.deepEqual(asked, ["/v1/models", "/props?model=a%20b"]);
+    } finally {
+      await server.close();
+    }
   });
 });
 

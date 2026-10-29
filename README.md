@@ -61,7 +61,7 @@ its presets; for OpenRouter, the models that take tools.
 
 | Setting | |
 | --- | --- |
-| `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`. User settings only, so a workspace can't send your code elsewhere. |
+| `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`, and `contextTokens`, the model's context window, for a server that doesn't report it. User settings only, so a workspace can't send your code elsewhere. |
 | `worsley.backend` | Which of them is in use. |
 | `worsley.testCommand` | The workspace's test command, such as `pytest -q`. It runs without asking. Empty: the model works out how the tests run, and each command needs approval. |
 | `worsley.commandTimeoutSeconds` | When a command is stopped (600). |
@@ -90,6 +90,26 @@ from turn to turn and only new text is processed; on an iGPU, where prompt
 processing runs at a few hundred tokens a second, that is the difference
 between seconds and minutes. For the same reason the prompt tells the model
 to search and outline before it reads, and to read only the lines it needs.
+
+A thread is kept inside the model's context window. Worsley asks the
+server how big the window is (llama.cpp's router and OpenRouter list it in
+`/models`, and a single llama.cpp server in `/props`), or takes
+`contextTokens`, or learns it from the error when a prompt is refused for
+being too long. It estimates each prompt in tokens at the rate the server's
+own counts show, and when a prompt would leave the reply too little room
+(15% of the window, between 4K and 32K tokens), it makes room. First it
+clears old tool results, oldest first, keeping the current request's last
+three: file contents, search hits and test output are most of a thread,
+and the model can fetch any of them again. Only if the conversation still
+doesn't fit does the model summarize the requests before the current one,
+which replaces them, in a word budget of half the room the rest of the
+prompt leaves (an earlier summary is folded in, so summaries don't grow;
+and a summary alone, or anything already shorter than one, isn't summarized
+again). When a prompt is refused anyway, room is made the same
+way and the turn tried once more. The panel says when it has made room, and
+the stats under each reply show how much of the window was in use. Making
+room costs a local server its cached prompt from the first change on, so it
+clears down to well under the limit, so as not to need to again soon.
 
 A Change request can think while the rest don't (`changeExtraBody`):
 answers come faster, and a change's deliberation goes into its collapsed
@@ -122,7 +142,8 @@ back. Before a change, files with unsaved edits are saved, so the tests run
 on what you see, and the panel says if git already shows other changes. A
 model's reasoning is kept and sent back as the server sent it
 (`reasoning_content` for llama.cpp, `reasoning` and `reasoning_details` for
-OpenRouter). Links in a reply are checked once it is complete: a link to a
+OpenRouter). An error, and a tool call that failed, has a *Copy* button
+that copies its whole text. Links in a reply are checked once it is complete: a link to a
 file or folder that doesn't exist is struck through, and paths in code
 spans (`cart.py:12`, `src/core/`) and in prose (`cart.py:12`) become links
 when they name one. A link to a folder reveals it in the Explorer.
@@ -132,14 +153,19 @@ when they name one. A link to a folder reveals it in the Explorer.
 - `src/core/`: everything that doesn't need VS Code, tested without it: the
   streaming client (`chat.ts`, `sse.ts`), the agent loop (`agent.ts`), the
   tools (`tools.ts`, with `search.ts`, `edit.ts`, `files.ts`, `shell.ts`,
-  `git.ts`), which commands may run without asking (`commandLine.ts`), the
-  editor context (`context.ts`), links (`links.ts`, shared with the panel)
-  and the prompts (`prompts.ts`).
+  `git.ts`), which commands may run without asking (`commandLine.ts`),
+  keeping a thread inside the model's window (`compact.ts`), the editor
+  context (`context.ts`), links (`links.ts`, shared with the panel) and the
+  prompts (`prompts.ts`).
 - `src/editor/`: the VS Code side: the thread (`session.ts`), the panel's
   host (`panel.ts`), the workspace with its language servers
   (`workspace.ts`), the editor as the context sees it (`editorTracker.ts`),
   highlighting, settings, commands and the status bar.
 - `src/webview/`: the panel itself, with markdown-it.
+- `media/`: the panel's stylesheet and the sextant, drawn in `worsley.svg`
+  for the activity bar. The status bar takes an extension's own icon only
+  from a font, so `scripts/icon-font.py` builds `worsley.ttf` from the
+  drawing; run it again after changing the drawing.
 - `test/unit/`: `node --test` tests of `src/core`, some against a fake
   OpenAI-compatible server (`test/fakeModel.ts`).
 - `test/integration/`: VS Code driven against the fake model, in a small
@@ -166,6 +192,7 @@ pnpm run live -- --root samples/shop --mode change --test-command "python3 -m un
 node out/test/live/suite.js --out live-results --model ID   # six tasks on one model, checked
 node out/test/live/suite.js --out live-results --summary    # a table of every model run so far
 node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|tour|empty, &theme=light
+uv run scripts/icon-font.py # media/worsley.ttf, the status bar's sextant, from media/worsley.svg
 ```
 
 The integration test downloads VS Code 1.101.0, the `engines.vscode` floor,
@@ -179,8 +206,6 @@ it at OpenRouter.
 
 - Threads don't survive a reload of the window.
 - Only the workspace's first folder is used.
-- A long thread isn't compacted: when the model's context runs out, start a
-  new thread.
 - Answers appear only in the panel, not inline in the editor (VS Code's
   comment threads could hold them next to the code).
 - Thinking is set per backend and mode in the settings (`extraBody`,

@@ -43,12 +43,12 @@ export class WorsleyStatusBar implements vscode.Disposable {
   private render(): void {
     const backend = activeBackend();
     if (backend === undefined) {
-      this.item.text = "$(book) Worsley: no model";
+      this.item.text = "$(worsley-sextant) Worsley: no model";
       this.item.tooltip = "Add a backend to worsley.backends in your settings.";
       return;
     }
     const model = backend.model.split("/").pop() ?? backend.model;
-    this.item.text = `${this.busy ? "$(loading~spin)" : "$(book)"} ${model}`;
+    this.item.text = `${this.busy ? "$(loading~spin)" : "$(worsley-sextant)"} ${model}`;
     const doing = this.busy && this.status !== "" ? `\n\n${this.status}` : "";
     this.item.tooltip = `Worsley: ${backend.model} on ${backend.name} (${backend.baseUrl})${doing}\n\nClick to choose another model.`;
   }

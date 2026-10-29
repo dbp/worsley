@@ -117,4 +117,5 @@ export type PanelMessage =
   | { type: "walkChanges" }
   | { type: "checkLinks"; id: string; hrefs: string[] }
   | { type: "startTour" }
+  | { type: "copy"; text: string }
   | { type: "pickBackend" };

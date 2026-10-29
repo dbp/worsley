@@ -1,8 +1,9 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { runAgent, type AgentEnd, type AgentHooks } from "../core/agent";
-import { chatTurn, type ChatMessage, type ToolCall, type Usage } from "../core/chat";
+import { chatTurn, contextWindowOf, type ChatMessage, type ToolCall, type Usage } from "../core/chat";
 import { allowedBy, scopesFor, withRules, type CommandRules } from "../core/commandLine";
+import { TokenGauge, withRoom, type Compaction } from "../core/compact";
 import { contextChips, formatContext } from "../core/context";
 import { errorText } from "../core/errorText";
 import { numberLines, splitLines, summarizeFiles } from "../core/files";
@@ -64,6 +65,11 @@ export class Session implements vscode.Disposable {
   /** Files read or written, for write_file's check; what of each visible file was sent. */
   private seen = new Set<string>();
   private sent = new Map<string, string>();
+  /** How the current request's message is written, to write it again once what it refers back to is gone. */
+  private recompose: (() => string) | undefined;
+  private gauge = new TokenGauge();
+  /** Each model's context window, by server and model, once found. */
+  private readonly windows = new Map<string, number>();
   private excluded = new Set<string>();
   private changedInThread = new Set<string>();
   private lastChanges: ChangedFile[] = [];
@@ -152,13 +158,13 @@ export class Session implements vscode.Disposable {
       const included = contextChips(files, { maxFileLines, excluded: this.excluded })
         .filter((chip) => !chip.excluded)
         .map((chip) => chip.label);
-      const context = formatContext(files, { maxFileLines, excluded: this.excluded, sent: this.sent });
       this.add<"user">({ kind: "user", mode, text: request, context: included });
       if (mode === "change") {
         await this.prepareChange(ws);
       }
       const position = this.tour !== undefined && this.tour.current >= 0 ? { plan: this.tour.plan, index: this.tour.current } : undefined;
-      this.messages.push({ role: "user", content: userRequest(mode, request, context, position) });
+      this.recompose = () => userRequest(mode, request, formatContext(files, { maxFileLines, excluded: this.excluded, sent: this.sent }), position);
+      this.messages.push({ role: "user", content: this.recompose() });
       await this.run(ws, mode);
     });
     if (this.tourToStart) {
@@ -181,6 +187,8 @@ export class Session implements vscode.Disposable {
     this.messages = [];
     this.seen = new Set();
     this.sent = new Map();
+    this.recompose = undefined;
+    this.gauge = new TokenGauge();
     this.excluded = new Set();
     this.changedInThread = new Set();
     this.lastChanges = [];
@@ -342,6 +350,7 @@ export class Session implements vscode.Disposable {
     let replied = false;
     await this.whileBusy(async () => {
       const lines = splitLines(await ws.readText(step.path));
+      this.recompose = undefined;
       this.messages.push({ role: "user", content: tourStepRequest(tour.plan, index, numberLines(lines, step.start, step.end)) });
       replied = await this.run(ws, "ask");
     });
@@ -438,6 +447,15 @@ export class Session implements vscode.Disposable {
       return false;
     }
     const endpoint = await settings.endpointFor(backend, this.deps.secrets, mode);
+    // The window is asked for once per server and model; an overflow error can say it too.
+    const windowKey = `${backend.baseUrl}\n${backend.model}`;
+    if (backend.contextTokens === undefined && !this.windows.has(windowKey)) {
+      const found = await contextWindowOf(endpoint, AbortSignal.timeout(10_000));
+      if (found !== undefined) {
+        this.windows.set(windowKey, found);
+      }
+    }
+    const window = (): number | undefined => backend.contextTokens ?? this.windows.get(windowKey);
     if (endpoint.apiKey === undefined && !settings.isLocal(backend)) {
       const where = backend.apiKeyEnv !== undefined ? `, or set ${backend.apiKeyEnv} in the environment VS Code starts from` : "";
       this.add<"notice">({ kind: "notice", level: "error", text: `${backend.name} needs an API key: run “Worsley: Set API Key…”${where}.` });
@@ -510,7 +528,13 @@ export class Session implements vscode.Disposable {
     };
 
     const end = await runAgent({
-      chat: (messages, tools, handlers, signal) => chatTurn(endpoint, messages, tools, handlers, signal),
+      chat: withRoom((messages, tools, handlers, signal) => chatTurn(endpoint, messages, tools, handlers, signal), {
+        window,
+        learnWindow: (tokens) => this.windows.set(windowKey, tokens),
+        gauge: this.gauge,
+        made: (compaction) => this.madeRoom(compaction),
+        status: (text) => this.setStatus(text),
+      }),
       messages: this.messages,
       tools: TOOLS,
       maxRounds: settings.maxToolRounds(),
@@ -524,7 +548,7 @@ export class Session implements vscode.Disposable {
       this.update(unfinished, true);
     }
     if (lastReply !== undefined) {
-      lastReply.stats = formatStats(totals, Date.now() - started);
+      lastReply.stats = formatStats(totals, Date.now() - started, window());
       this.update(lastReply, true);
     }
     if (changed.size > 0) {
@@ -568,6 +592,33 @@ export class Session implements vscode.Disposable {
         notice("error", `${end.message}${hint}`);
         return;
       }
+    }
+  }
+
+  /**
+   * Room was made for the model. A summary took away what the current
+   * request may say is "unchanged since an earlier message", so that is
+   * sent again in full, and so is everything after.
+   */
+  private madeRoom(compaction: Compaction): void {
+    const what = [
+      compaction.cleared > 0 && `cleared ${plural(compaction.cleared, "earlier tool result")}`,
+      compaction.summarized && "replaced the conversation before this request with a summary",
+    ].filter(Boolean);
+    if (compaction.summarized) {
+      this.sent.clear();
+      const last = this.messages.map((m) => m.role).lastIndexOf("user");
+      const message = this.messages[last];
+      if (this.recompose !== undefined && message?.role === "user") {
+        message.content = this.recompose();
+      }
+    }
+    if (what.length > 0) {
+      this.add<"notice">({
+        kind: "notice",
+        level: "info",
+        text: `Made room in the conversation for the model (about ${kilo(compaction.before)} → ${kilo(compaction.after)} tokens): ${what.join(", and ")}. It can read again whatever it needs.`,
+      });
     }
   }
 
@@ -615,12 +666,17 @@ export class Session implements vscode.Disposable {
   private askApproval(command: string, signal: AbortSignal): Promise<Approval> {
     const { scopes, suggested } = scopesFor(command, this.allowedCommands);
     const item = this.add<"approval">({ kind: "approval", command, status: "pending", scopes: scopes.map((s) => s.label), scope: suggested });
+    // "Running …", which is true again once the command is allowed.
+    const running = this.status;
     this.setStatus("Waiting for you to approve a command…");
     return new Promise((resolve) => {
       const settle = (decision: Approval, scope?: number): void => {
         this.approvals.delete(item.id);
         signal.removeEventListener("abort", onAbort);
         item.status = decision === "deny" ? "denied" : "approved";
+        if (decision !== "deny") {
+          this.setStatus(running);
+        }
         const chosen = decision === "always" ? (scopes[scope ?? suggested] ?? scopes[suggested]) : undefined;
         if (chosen === undefined) {
           this.update(item, true);
@@ -731,13 +787,13 @@ function addUsage(totals: Totals, usage: Usage | undefined): void {
   totals.cost += usage.cost ?? 0;
 }
 
-function formatStats(totals: Totals, ms: number): string {
+function formatStats(totals: Totals, ms: number, window: number | undefined): string {
   const parts = [ms < 10_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`];
   if (totals.rounds > 1) {
     parts.push(`${totals.rounds} rounds`);
   }
   if (totals.context !== undefined) {
-    parts.push(`${kilo(totals.context)} context`);
+    parts.push(window !== undefined ? `${kilo(totals.context)} of ${kilo(window)} context` : `${kilo(totals.context)} context`);
   }
   if (totals.generated > 0) {
     parts.push(`${kilo(totals.generated)} generated`);

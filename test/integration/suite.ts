@@ -92,7 +92,8 @@ async function scenario(): Promise<void> {
   );
   const answer = items().find((i): i is Extract<Item, { kind: "assistant" }> => i.kind === "assistant" && i.text.startsWith("It adds up"));
   assert.ok(answer, "the answer is in the thread");
-  assert.match(answer.stats ?? "", /3 rounds · 1\.2K context · 102 generated · 42\.5 tok\/s/);
+  // The window, 32768 tokens, comes from the fake server's /models.
+  assert.match(answer.stats ?? "", /3 rounds · 1\.2K of 33K context · 102 generated · 42\.5 tok\/s/);
 
   // The panel asks which of the reply's links lead somewhere.
   await session.checkLinks(answer.id, ["src/cart.js#L3-L5", "cart.test.js:6", "missing.js:3", "src/cart.js#L90", "src", "test/", "missing/"]);
@@ -134,11 +135,14 @@ async function scenario(): Promise<void> {
   type ApprovalItem = Extract<Item, { kind: "approval" }>;
   const pending = (): ApprovalItem | undefined => items().find((i): i is ApprovalItem => i.kind === "approval" && i.status === "pending");
   void vscode.commands.executeCommand("worsley.change", "Look at the history");
+  const status = (): string | undefined => [...posted].reverse().find((m): m is Extract<HostMessage, { type: "busy" }> => m.type === "busy")?.status;
   const first = await waitFor("an approval", pending);
   assert.equal(first.command, "git log --oneline -1");
   assert.deepEqual(first.scopes, ["git log …", "git log --oneline …", "exactly this command"]);
   assert.equal(first.scopes[first.scope], "git log …");
+  assert.equal(status(), "Waiting for you to approve a command…");
   session.approve(first.id, "always", 0);
+  assert.equal(status(), "Running git log --oneline -1…", "once allowed, the status says the command is running");
   const second = await waitFor("a second approval", () => {
     const p = pending();
     return p !== undefined && p.id !== first.id ? p : undefined;

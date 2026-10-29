@@ -113,6 +113,9 @@ export class PanelProvider implements vscode.WebviewViewProvider, vscode.Disposa
       case "checkLinks":
         void session.checkLinks(message.id, message.hrefs);
         return;
+      case "copy":
+        void vscode.env.clipboard.writeText(message.text);
+        return;
       case "startTour":
         void vscode.commands.executeCommand("worsley.tour");
         return;

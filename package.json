@@ -171,6 +171,15 @@
         }
       ]
     },
+    "icons": {
+      "worsley-sextant": {
+        "description": "Worsley's sextant, as in the activity bar.",
+        "default": {
+          "fontPath": "media/worsley.ttf",
+          "fontCharacter": "\\E000"
+        }
+      }
+    },
     "colors": [
       {
         "id": "worsley.highlightBackground",
@@ -199,7 +208,7 @@
         "worsley.backends": {
           "type": "array",
           "scope": "machine",
-          "markdownDescription": "The models Worsley can use. Each is an OpenAI-compatible chat endpoint: `name`, `baseUrl` (ending in `/v1`, or `/api/v1` for OpenRouter), `model`, and optionally `apiKeyEnv` (an environment variable holding the key; **Worsley: Set API Key…** stores one instead), `headers`, `extraBody` (merged into every request, such as `{\"chat_template_kwargs\": {\"enable_thinking\": false}}` to turn a Qwen model's thinking off on llama.cpp), and `changeExtraBody` (merged over `extraBody` for Change requests only: the `local` backend thinks when it changes code, and not when it answers). This can be set only in user settings, so a workspace can't send your code somewhere else.",
+          "markdownDescription": "The models Worsley can use. Each is an OpenAI-compatible chat endpoint: `name`, `baseUrl` (ending in `/v1`, or `/api/v1` for OpenRouter), `model`, and optionally `apiKeyEnv` (an environment variable holding the key; **Worsley: Set API Key…** stores one instead), `headers`, `extraBody` (merged into every request, such as `{\"chat_template_kwargs\": {\"enable_thinking\": false}}` to turn a Qwen model's thinking off on llama.cpp), `changeExtraBody` (merged over `extraBody` for Change requests only: the `local` backend thinks when it changes code, and not when it answers), and `contextTokens`, the model's context window, for a server that doesn't report it (llama.cpp and OpenRouter do). This can be set only in user settings, so a workspace can't send your code somewhere else.",
           "items": {
             "type": "object",
             "required": [
@@ -231,6 +240,10 @@
               },
               "changeExtraBody": {
                 "type": "object"
+              },
+              "contextTokens": {
+                "type": "number",
+                "minimum": 1024
               }
             }
           },

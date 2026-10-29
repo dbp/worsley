@@ -95,6 +95,52 @@ export interface TurnHandlers {
 export class ChatError extends Error {}
 
 /**
+ * The prompt didn't fit the model's context window. `limit` is the
+ * window's size, and `promptTokens` the prompt's, when the server says.
+ */
+export class ContextOverflowError extends ChatError {
+  constructor(
+    message: string,
+    readonly limit: number | undefined,
+    readonly promptTokens: number | undefined,
+  ) {
+    super(message);
+  }
+}
+
+const OVERFLOW = /exceed_context_size|context_length_exceeded|exceeds the (?:available )?context|maximum context length|context (?:window|length) (?:is )?exceeded|prompt is too long|too many (?:input )?tokens/i;
+
+/**
+ * The error as a ContextOverflowError when that is what it says: in
+ * llama.cpp's fields (`n_ctx`, `n_prompt_tokens`) or in the wording other
+ * servers use, such as "maximum context length is 131072 tokens" or
+ * "prompt is too long: 210000 tokens > 200000 maximum".
+ */
+export function asOverflow(message: string, body: unknown): ContextOverflowError | undefined {
+  const fields = (body as { error?: { type?: unknown; n_ctx?: unknown; n_prompt_tokens?: unknown } } | undefined)?.error;
+  const typed = fields?.type === "exceed_context_size_error";
+  if (!typed && !OVERFLOW.test(message)) {
+    return undefined;
+  }
+  const number = (pattern: RegExp): number | undefined => {
+    const found = pattern.exec(message)?.[1];
+    return found === undefined ? undefined : Number(found.replace(/,/g, ""));
+  };
+  const limit =
+    (typeof fields?.n_ctx === "number" ? fields.n_ctx : undefined) ??
+    number(/context size \((\d[\d,]*) tokens\)/i) ??
+    number(/maximum context length is (\d[\d,]*)/i) ??
+    number(/> (\d[\d,]*) maximum/i) ??
+    number(/context (?:window|length) of (\d[\d,]*)/i);
+  const prompt =
+    (typeof fields?.n_prompt_tokens === "number" ? fields.n_prompt_tokens : undefined) ??
+    number(/request \((\d[\d,]*) tokens\)/i) ??
+    number(/requested (?:about )?(\d[\d,]*) tokens/i) ??
+    number(/too long: (\d[\d,]*) tokens/i);
+  return new ContextOverflowError(message, limit, prompt);
+}
+
+/**
  * `over` merged into `base`, as a request's extra body for its mode is
  * merged into the backend's: objects key by key all the way down, so
  * `{"chat_template_kwargs": {"enable_thinking": true}}` changes that one
@@ -162,7 +208,8 @@ export async function chatTurn(
       continue;
     }
     if (chunk.error !== undefined) {
-      throw new ChatError(describeError(chunk.error) ?? "The server reported an error mid-reply.");
+      const message = describeError(chunk.error) ?? "The server reported an error mid-reply.";
+      throw asOverflow(message, chunk) ?? new ChatError(message);
     }
     const choice = chunk.choices?.[0];
     const delta = choice?.delta;
@@ -360,7 +407,48 @@ async function post(
       await sleep(2000, signal);
       continue;
     }
-    throw new ChatError(`${endpoint.baseUrl} answered ${response.status}: ${message}`);
+    const full = `${endpoint.baseUrl} answered ${response.status}: ${message}`;
+    throw asOverflow(full, parseJson(text)) ?? new ChatError(full);
+  }
+}
+
+/**
+ * The model's context window in tokens, as its server reports it: the
+ * running size (`meta.n_ctx`) or the model's (`context_length`) in its entry
+ * of `/models`, which llama.cpp's router and OpenRouter both give; then
+ * llama.cpp's `/props`, which a single-model server answers. Undefined when
+ * neither says.
+ */
+export async function contextWindowOf(endpoint: Endpoint, signal: AbortSignal): Promise<number | undefined> {
+  const positive = (n: unknown): number | undefined => (typeof n === "number" && n > 0 ? n : undefined);
+  const get = async (url: string): Promise<unknown> => {
+    try {
+      const response = await fetch(url, { headers: headersFor(endpoint), signal });
+      return response.ok ? await response.json() : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const base = trimSlash(endpoint.baseUrl);
+  const models = (await get(`${base}/models`)) as { data?: unknown } | undefined;
+  const entry = (Array.isArray(models?.data) ? models.data : []).find((m: { id?: unknown } | null) => m?.id === endpoint.model) as
+    | { context_length?: unknown; meta?: { n_ctx?: unknown }; top_provider?: { context_length?: unknown }; max_model_len?: unknown }
+    | undefined;
+  const listed = positive(entry?.meta?.n_ctx) ?? positive(entry?.top_provider?.context_length) ?? positive(entry?.context_length) ?? positive(entry?.max_model_len);
+  if (listed !== undefined) {
+    return listed;
+  }
+  const props = (await get(`${base.replace(/\/v1$/, "")}/props?model=${encodeURIComponent(endpoint.model)}`)) as
+    | { default_generation_settings?: { n_ctx?: unknown } }
+    | undefined;
+  return positive(props?.default_generation_settings?.n_ctx);
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }
 

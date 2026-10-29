@@ -12,6 +12,8 @@ export interface Backend {
   extraBody?: Record<string, unknown>;
   /** Merged over `extraBody` for Change requests, such as to turn thinking on for them. */
   changeExtraBody?: Record<string, unknown>;
+  /** The model's context window in tokens, for a server that doesn't say. */
+  contextTokens?: number;
 }
 
 function config(): vscode.WorkspaceConfiguration {
