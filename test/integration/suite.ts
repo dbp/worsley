@@ -8,8 +8,9 @@ import type { HostMessage, Item } from "../../src/protocol";
 /**
  * Inside VS Code, against the fake model: ask about a selection (with the
  * editor's references and a list of locations), check the reply's links,
- * open one; change the code (two edits, then the tests, which run without
- * asking); commands that need approval, one allowed by its class; and a two-step tour, each step
+ * open one; keep the thread for the next window; change the code (two
+ * edits, then the tests, which run without asking); commands that need
+ * approval, one allowed by its class; and a two-step tour, each step
  * opening its code. test-electron calls `run`; a throw fails the run.
  */
 
@@ -66,7 +67,7 @@ async function scenario(): Promise<void> {
   assert.ok(WORKSPACE, "WORSLEY_TEST_WORKSPACE isn't set");
   const extension = vscode.extensions.getExtension<WorsleyApi>("worsley.worsley");
   assert.ok(extension, "the extension isn't loaded");
-  const { session, panel } = await extension.activate();
+  const { session, panel, threadFile } = await extension.activate();
   const posted: HostMessage[] = [];
   session.onDidPost((message) => posted.push(message));
   const items = (): readonly Item[] => session.snapshot.items;
@@ -94,6 +95,19 @@ async function scenario(): Promise<void> {
   assert.ok(answer, "the answer is in the thread");
   // The window, 32768 tokens, comes from the fake server's /models.
   assert.match(answer.stats ?? "", /3 rounds · 1\.2K of 33K context · 102 generated · 42\.5 tok\/s/);
+
+  // A moment after the request ends, the thread is kept for the next window.
+  assert.ok(threadFile !== undefined, "the workspace has storage");
+  const kept = await waitFor("the thread to be kept", () => {
+    try {
+      const saved = JSON.parse(fs.readFileSync(threadFile, "utf8")) as { items: Item[]; messages: unknown[] };
+      return saved.items.length === items().length ? saved : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  assert.deepEqual(kept.items, JSON.parse(JSON.stringify(items())));
+  assert.deepEqual(kept.messages, JSON.parse(JSON.stringify(session.snapshot.messages)));
 
   // The panel asks which of the reply's links lead somewhere.
   await session.checkLinks(answer.id, ["src/cart.js#L3-L5", "cart.test.js:6", "missing.js:3", "src/cart.js#L90", "src", "test/", "missing/"]);
@@ -160,6 +174,7 @@ async function scenario(): Promise<void> {
 
   // ---- A tour: the first step opens and is explained at once, the next when asked.
   await session.reset();
+  assert.equal(fs.existsSync(threadFile), false, "a new thread leaves nothing kept");
   assert.equal(items().length, 0);
   await vscode.commands.executeCommand("worsley.tour");
   const explained = await waitFor("the first step's explanation", () => items().find((i) => i.kind === "assistant" && i.text.startsWith("Step 1:")));

@@ -11,6 +11,7 @@ import { isGitRepo, uncommittedFiles } from "../core/git";
 import { foldersOf, formatHref, labelRef, parseCodeRef, resolvePath, type CodeRef } from "../core/links";
 import { workspacePath } from "../core/paths";
 import { systemPrompt, tourStepRequest, userRequest, WALK_CHANGES } from "../core/prompts";
+import { interrupted, parseSaved, type SavedThread } from "../core/saved";
 import { TOOLS, type Place, type ToolContext, type ToolUi, type TourPlan } from "../core/tools";
 import type { Approval, ChangedFile, HostMessage, Item, LinkStatus, LocationView, Mode, TourView } from "../protocol";
 import type { EditorTracker } from "./editorTracker";
@@ -26,6 +27,8 @@ const ALLOWED_KEY = "worsley.allowedCommands";
 const PREFIXES_KEY = "worsley.allowedPrefixes";
 /** Streaming text reaches the panel at most this often. */
 const UPDATE_MS = 60;
+/** The thread is kept this long after it last changed, so that a burst of changes is written once. */
+const SAVE_MS = 500;
 
 interface Listing {
   files: ReadonlySet<string>;
@@ -45,6 +48,14 @@ export interface SessionDeps {
   highlighter: Highlighter;
   secrets: vscode.SecretStorage;
   state: vscode.Memento;
+  /** Where the thread is kept between windows; none without a workspace. */
+  store: ThreadStore | undefined;
+}
+
+/** Holds a thread as text; saving undefined clears it. */
+export interface ThreadStore {
+  load(): string | undefined;
+  save(text: string | undefined): void;
 }
 
 /**
@@ -84,6 +95,8 @@ export class Session implements vscode.Disposable {
   private nextId = 1;
   private readonly pending = new Map<string, Item>();
   private flushTimer: NodeJS.Timeout | undefined;
+  private saveTimer: NodeJS.Timeout | undefined;
+  private warnedSave = false;
   private workspace: EditorWorkspace | undefined;
 
   constructor(private readonly deps: SessionDeps) {
@@ -97,9 +110,16 @@ export class Session implements vscode.Disposable {
         }
       }),
     ];
+    const saved = deps.store?.load();
+    const thread = saved === undefined ? undefined : parseSaved(saved);
+    if (thread !== undefined) {
+      this.restore(thread);
+    }
   }
 
   dispose(): void {
+    // Before the request stops, so that the next window has it as it is now.
+    this.save();
     this.controller?.abort();
     clearTimeout(this.flushTimer);
     for (const s of this.subscriptions) {
@@ -196,6 +216,7 @@ export class Session implements vscode.Disposable {
     this.locations.clear();
     this.pending.clear();
     this.deps.highlighter.clear();
+    this.save();
     this.resync();
   }
 
@@ -335,6 +356,7 @@ export class Session implements vscode.Disposable {
     }
     tour.current = index;
     this.postTour();
+    this.scheduleSave();
     try {
       await this.deps.highlighter.show({ uri: ws.uri(step.path), start: step.start, end: step.end });
     } catch (err) {
@@ -369,6 +391,7 @@ export class Session implements vscode.Disposable {
     this.tour = undefined;
     this.deps.highlighter.clear();
     this.postTour();
+    this.scheduleSave();
   }
 
   private tourView(): TourView | undefined {
@@ -396,6 +419,7 @@ export class Session implements vscode.Disposable {
     } finally {
       this.running = undefined;
       this.setBusy(false, "");
+      this.scheduleSave();
     }
   }
 
@@ -696,6 +720,70 @@ export class Session implements vscode.Disposable {
       signal.addEventListener("abort", onAbort, { once: true });
       this.approvals.set(item.id, settle);
     });
+  }
+
+  // ---- Keeping the thread between windows
+
+  /** The thread as it is kept; in the middle of a request, as a stop would leave it. */
+  private saved(): SavedThread {
+    const tour = this.tour;
+    const thread: SavedThread = {
+      version: 1,
+      items: this.items,
+      messages: this.messages,
+      tour: tour === undefined ? undefined : { plan: tour.plan, current: tour.current, explained: [...tour.explained] },
+      seen: [...this.seen],
+      sent: [...this.sent],
+      changedInThread: [...this.changedInThread],
+      lastChanges: this.lastChanges,
+      warnedGit: this.warnedGit,
+      locations: [...this.locations],
+      nextId: this.nextId,
+    };
+    return this.busy ? interrupted(thread) : thread;
+  }
+
+  private restore(thread: SavedThread): void {
+    this.items = thread.items;
+    this.messages = thread.messages;
+    this.tour = thread.tour === undefined ? undefined : { plan: thread.tour.plan, current: thread.tour.current, explained: new Map(thread.tour.explained) };
+    this.seen = new Set(thread.seen);
+    this.sent = new Map(thread.sent);
+    this.changedInThread = new Set(thread.changedInThread);
+    this.lastChanges = thread.lastChanges;
+    this.warnedGit = thread.warnedGit;
+    for (const [id, places] of thread.locations) {
+      this.locations.set(id, places);
+    }
+    this.nextId = thread.nextId;
+  }
+
+  /** Once the thread has been still for a moment, unless a request is running. */
+  private scheduleSave(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      if (!this.busy) {
+        this.save();
+      }
+    }, SAVE_MS);
+  }
+
+  /** An empty thread leaves nothing behind. */
+  private save(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    const store = this.deps.store;
+    if (store === undefined) {
+      return;
+    }
+    try {
+      store.save(this.items.length === 0 && this.messages.length === 0 ? undefined : JSON.stringify(this.saved()));
+    } catch (err) {
+      if (!this.warnedSave) {
+        this.warnedSave = true;
+        void vscode.window.showWarningMessage(`Worsley couldn't keep the thread for the next window: ${errorText(err)}`);
+      }
+    }
   }
 
   // ---- Posting to the panel

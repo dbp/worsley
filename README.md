@@ -5,7 +5,9 @@ than replacing the reading. Worsley sits in a side panel, sees what the
 editor shows, and answers by pointing into the code: every claim links to
 the lines it is about, which open and highlight in the editor beside it.
 Changes are written straight to the working tree, for review with git;
-there is no diff view to accept or reject.
+there is no diff view to accept or reject. Answers stay in the panel rather
+than inline in the editor, where there is no room for them, so that an
+explanation can range across files and link to each place it is about.
 
 - **Ask about code.** Select some code, press `Ctrl+Alt+A` (`⌘⌥A`) and ask
   your own question. The selection and the visible files go with it.
@@ -111,6 +113,12 @@ the stats under each reply show how much of the window was in use. Making
 room costs a local server its cached prompt from the first change on, so it
 clears down to well under the limit, so as not to need to again soon.
 
+The thread outlasts a reload or a restart of VS Code: it is kept in VS
+Code's storage for the workspace, after each request and as the window
+closes, and **Worsley: New Thread** clears it. A request that a reload cuts
+off stops where it got to, as *Stop* would leave it, and "go on" picks it
+up.
+
 A Change request can think while the rest don't (`changeExtraBody`):
 answers come faster, and a change's deliberation goes into its collapsed
 reasoning instead of the reply. Switching costs the cache nothing with
@@ -154,7 +162,8 @@ when they name one. A link to a folder reveals it in the Explorer.
   streaming client (`chat.ts`, `sse.ts`), the agent loop (`agent.ts`), the
   tools (`tools.ts`, with `search.ts`, `edit.ts`, `files.ts`, `shell.ts`,
   `git.ts`), which commands may run without asking (`commandLine.ts`),
-  keeping a thread inside the model's window (`compact.ts`), the editor
+  keeping a thread inside the model's window (`compact.ts`) and between
+  windows (`saved.ts`), the editor
   context (`context.ts`), links (`links.ts`, shared with the panel) and the
   prompts (`prompts.ts`).
 - `src/editor/`: the VS Code side: the thread (`session.ts`), the panel's
@@ -171,7 +180,8 @@ when they name one. A link to a folder reveals it in the Explorer.
 - `test/integration/`: VS Code driven against the fake model, in a small
   JavaScript project: an Ask with a selection, the language server's
   references and a list of locations; link checks; a change with two edits
-  and the tests; a command that needs approval; a two-step tour.
+  and the tests; a command that needs approval; a two-step tour; and the
+  thread kept for the next window.
 - `test/live/`: one request against a real model from the command line, with
   the same prompts and tools but no language servers (`run.ts`, which can
   send a selection and report times, tokens and broken links as JSON), and
@@ -204,10 +214,7 @@ it at OpenRouter.
 
 ## Not yet
 
-- Threads don't survive a reload of the window.
 - Only the workspace's first folder is used.
-- Answers appear only in the panel, not inline in the editor (VS Code's
-  comment threads could hold them next to the code).
 - Thinking is set per backend and mode in the settings (`extraBody`,
   `changeExtraBody`), not in the panel.
 - Symbolic links inside the workspace that point out of it aren't stopped.
