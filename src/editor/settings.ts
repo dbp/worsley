@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { mergeBodies, type Endpoint } from "../core/chat";
+import { bareKey, mergeBodies, type Endpoint } from "../core/chat";
 import type { Mode } from "../protocol";
 
 /** An entry of `worsley.backends`: one OpenAI-compatible endpoint and the model to use there. */
@@ -59,6 +59,24 @@ export async function storeApiKey(backend: Backend, key: string, secrets: vscode
   }
 }
 
+/**
+ * Asks for `backend`'s key, after `why`, and stores it. The key given, empty
+ * when the stored one was removed, or undefined if the user cancelled.
+ */
+export async function askForKey(backend: Backend, secrets: vscode.SecretStorage, why = ""): Promise<string | undefined> {
+  const fallback = backend.apiKeyEnv !== undefined ? ` and use ${backend.apiKeyEnv} instead` : "";
+  const key = await vscode.window.showInputBox({
+    title: `Worsley: API Key for ${backend.name}`,
+    prompt: `${why}Paste the key itself, without “Bearer”. It is kept in VS Code's secret storage. Leave it empty to remove the stored key${fallback}.`,
+    ignoreFocusOut: true,
+  });
+  if (key === undefined) {
+    return undefined;
+  }
+  await storeApiKey(backend, bareKey(key), secrets);
+  return bareKey(key);
+}
+
 export async function endpointFor(backend: Backend, secrets: vscode.SecretStorage, mode: Mode = "ask"): Promise<Endpoint> {
   return {
     baseUrl: backend.baseUrl,
@@ -69,22 +87,40 @@ export async function endpointFor(backend: Backend, secrets: vscode.SecretStorag
   };
 }
 
-/** A server on this machine, which needs no key. */
+/** A server on this machine. */
 export function isLocal(backend: Backend): boolean {
   return /^https?:\/\/(?:localhost|127\.\d+\.\d+\.\d+|\[::1\])(?::\d+)?(?:\/|$)/i.test(backend.baseUrl);
 }
 
 /**
- * Makes `name` the backend in use, with `model`. `worsley.backends` can only
- * be in user settings, so that is where the change goes; a list still at
- * its default is copied there first.
+ * A backend that names where its key comes from can't be used without one.
+ * Any other gets a key only if one is stored for it, since a server of
+ * one's own often needs none.
  */
-export async function chooseBackend(name: string, model: string): Promise<void> {
+export function needsKey(backend: Backend): boolean {
+  return backend.apiKeyEnv !== undefined;
+}
+
+/**
+ * `worsley.backends` as user settings hold it. It can only be there, so
+ * changes go there too; a list still at its default is copied there first.
+ */
+function userBackends(): Backend[] {
   const inspected = config().inspect<unknown[]>("backends");
-  const list = (inspected?.globalValue ?? inspected?.defaultValue ?? []).filter(isBackend);
-  const updated = list.map((b) => (b.name === name ? { ...b, model } : b));
+  return (inspected?.globalValue ?? inspected?.defaultValue ?? []).filter(isBackend);
+}
+
+/** Makes `name` the backend in use, with `model`. */
+export async function chooseBackend(name: string, model: string): Promise<void> {
+  const updated = userBackends().map((b) => (b.name === name ? { ...b, model } : b));
   await config().update("backends", updated, vscode.ConfigurationTarget.Global);
   await config().update("backend", name, vscode.ConfigurationTarget.Global);
+}
+
+/** Adds `backend` to `worsley.backends`, and makes it the one in use. */
+export async function addBackend(backend: Backend): Promise<void> {
+  await config().update("backends", [...userBackends(), backend], vscode.ConfigurationTarget.Global);
+  await config().update("backend", backend.name, vscode.ConfigurationTarget.Global);
 }
 
 export function testCommand(): string {

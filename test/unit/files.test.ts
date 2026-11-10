@@ -4,10 +4,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { listFiles, numberLines, splitLines, summarizeFiles } from "../../src/core/files";
-import { uncommittedFiles } from "../../src/core/git";
+import { uncommittedChanges, uncommittedDiff } from "../../src/core/git";
 import { compileGlob } from "../../src/core/glob";
 import { workspacePath } from "../../src/core/paths";
 import { search } from "../../src/core/search";
+import type { FileChange } from "../../src/protocol";
 import { installedRipgrep, tempFolder } from "./helpers";
 
 function gitInit(root: string): void {
@@ -119,15 +120,61 @@ describe("searching", () => {
   }
 });
 
-describe("uncommitted files", () => {
-  it("are relative to the workspace folder, even inside a bigger repository", async () => {
+describe("uncommitted changes", () => {
+  const sorted = (changes: FileChange[] | undefined): FileChange[] | undefined => changes?.sort((a, b) => a.path.localeCompare(b.path));
+
+  it("count each file's lines, relative to the workspace folder, even inside a bigger repository", async () => {
+    const root = tempFolder(project);
+    fs.writeFileSync(path.join(root, "src/icon.bin"), Buffer.from([0, 1, 2]));
+    gitInit(root);
+    fs.appendFileSync(path.join(root, "src/app.py"), "# changed\n");
+    fs.writeFileSync(path.join(root, "README.md"), "changed\n");
+    fs.rmSync(path.join(root, "src/util/strings.py"));
+    fs.writeFileSync(path.join(root, "src/icon.bin"), Buffer.from([0, 1, 3]));
+    fs.writeFileSync(path.join(root, "src/util/new.py"), "a = 1\nb = 2");
+    fs.writeFileSync(path.join(root, "src/logo.png"), Buffer.from([0x89, 0x50, 0, 1]));
+    fs.writeFileSync(path.join(root, "debug2.log"), "ignored\n");
+    assert.deepEqual(sorted(await uncommittedChanges(root)), [
+      { path: "README.md", untracked: false, lines: { added: 1, removed: 2 } },
+      { path: "src/app.py", untracked: false, lines: { added: 1, removed: 0 } },
+      { path: "src/icon.bin", untracked: false, lines: undefined },
+      { path: "src/logo.png", untracked: true, lines: undefined },
+      { path: "src/util/new.py", untracked: true, lines: { added: 2, removed: 0 } },
+      { path: "src/util/strings.py", untracked: false, lines: { added: 0, removed: 2 } },
+    ]);
+    assert.deepEqual(
+      sorted(await uncommittedChanges(path.join(root, "src")))?.map((change) => change.path),
+      ["app.py", "icon.bin", "logo.png", "util/new.py", "util/strings.py"],
+    );
+    assert.equal(await uncommittedChanges(tempFolder({ "a.txt": "" })), undefined);
+  });
+
+  it("count both what is staged and what isn't before the first commit", async () => {
+    const root = tempFolder({ "f.txt": "x\n" });
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    execFileSync("git", ["add", "f.txt"], { cwd: root });
+    fs.writeFileSync(path.join(root, "f.txt"), "x\ny\n");
+    assert.deepEqual(await uncommittedChanges(root), [{ path: "f.txt", untracked: false, lines: { added: 2, removed: 0 } }]);
+  });
+});
+
+describe("the uncommitted diff", () => {
+  it("shows changes since the last commit and new files whole, for the workspace or one file", async () => {
     const root = tempFolder(project);
     gitInit(root);
     fs.appendFileSync(path.join(root, "src/app.py"), "# changed\n");
-    fs.writeFileSync(path.join(root, "src/util/new.py"), "");
-    fs.writeFileSync(path.join(root, "README.md"), "changed\n");
-    assert.deepEqual((await uncommittedFiles(root))?.sort(), ["README.md", "src/app.py", "src/util/new.py"]);
-    assert.deepEqual((await uncommittedFiles(path.join(root, "src")))?.sort(), ["app.py", "util/new.py"]);
-    assert.equal(await uncommittedFiles(tempFolder({ "a.txt": "" })), undefined);
+    fs.writeFileSync(path.join(root, "src/util/new.py"), "a = 1\n");
+    fs.writeFileSync(path.join(root, "debug2.log"), "ignored\n");
+    const all = (await uncommittedDiff(root)) ?? "";
+    assert.match(all, /^diff --git a\/src\/app\.py b\/src\/app\.py\n[\s\S]*\n\+# changed\n/);
+    assert.match(all, /diff --git a\/src\/util\/new\.py b\/src\/util\/new\.py\nnew file mode[\s\S]*\n\+a = 1\n/);
+    assert.doesNotMatch(all, /debug2\.log/, "ignored files stay out");
+    const one = (await uncommittedDiff(root, "src/util/new.py")) ?? "";
+    assert.match(one, /\+a = 1/);
+    assert.doesNotMatch(one, /app\.py/);
+    assert.match((await uncommittedDiff(path.join(root, "src"), "app.py")) ?? "", /a\/app\.py b\/app\.py/, "paths are relative to the folder");
+    assert.equal(await uncommittedDiff(root, "README.md"), "");
+    assert.equal(await uncommittedDiff(tempFolder({ "a.txt": "" })), undefined);
+    assert.equal(execFileSync("git", ["status", "--porcelain", "--", "src/util/new.py"], { cwd: root, encoding: "utf8" }), "?? src/util/new.py\n", "the new file is still untracked");
   });
 });

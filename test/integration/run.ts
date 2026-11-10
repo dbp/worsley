@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { runTests } from "@vscode/test-electron";
+import { TOUR_REQUEST } from "../../src/core/prompts";
 import { lastOf, startFakeModel, type ChatRequest, type FakeReply } from "../fakeModel";
 
 /**
@@ -119,18 +120,24 @@ function respond(request: ChatRequest): FakeReply {
       }
     }
   }
+  if (user.includes("Review my uncommitted changes")) {
+    const diff = /<diff>\n([\s\S]*)<\/diff>/.exec(user)?.[1] ?? "";
+    const files = [...diff.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
+    return { content: `Reviewed ${files.join(", ") || "no diff"}: [total](src/cart.js#L3-L5) takes a discount that no caller passes.` };
+  }
   if (user.includes("Look at the history")) {
     const command = ["git log --oneline -1", "git log --oneline --stat -1", "git status --short"][n];
     return command !== undefined ? { toolCalls: [{ name: "run_command", arguments: { command } }] } : { content: "Checked." };
   }
-  if (user.includes("tour of this codebase")) {
+  if (user.includes(TOUR_REQUEST)) {
     return n === 0
       ? {
           toolCalls: [
             {
               name: "present_tour",
               arguments: {
-                title: "The shop",
+                title: "How the shop is built",
+                kind: "structure",
                 steps: [
                   { path: "src/cart.js", start_line: 3, end_line: 5, title: "Totals", summary: "How a total is made." },
                   { path: "test/cart.test.js", start_line: 6, end_line: 8, title: "The test", summary: "What the test checks." },
@@ -143,7 +150,8 @@ function respond(request: ChatRequest): FakeReply {
   }
   const step = /<tour_step number="(\d+)"/.exec(user);
   if (step !== null) {
-    return { content: `Step ${step[1]}: see [this](${step[1] === "1" ? "src/cart.js#L3-L5" : "test/cart.test.js#L6-L8"}).` };
+    const as = user.includes("what it separates or connects") ? "structure" : "a walkthrough";
+    return { content: `Step ${step[1]}: see [this](${step[1] === "1" ? "src/cart.js#L3-L5" : "test/cart.test.js#L6-L8"}), explained as ${as}.` };
   }
   return { content: `I don't know what to do with: ${user.slice(-200)}` };
 }

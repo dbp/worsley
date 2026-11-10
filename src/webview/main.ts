@@ -48,7 +48,7 @@ const empty = h(
   { id: "empty" },
   h("p", { className: "empty-title" }, "Read the code, with help."),
   h("p", {}, "Select some code and press ", h("kbd", {}, keys("A")), " to ask about it, or ", h("kbd", {}, keys("E")), " to change it. Worsley sees the files you have open and what you select."),
-  h("p", {}, "Ask where something happens and it lists every place; ask how something works and it can walk you through the code a step at a time."),
+  h("p", {}, "Ask where something happens and it lists every place; ask how something works and it walks you through the code a step at a time. A tour of the codebase shows how it is built: its parts, and what separates and connects them."),
   h("button", { className: "secondary", "data-action": "start-tour" }, "Tour this codebase"),
 );
 thread.append(empty);
@@ -271,7 +271,55 @@ function draw(item: Item): HTMLElement {
       );
     case "notice":
       return h("div", { className: `item notice ${item.level}` }, h("span", {}, item.text), item.level !== "info" && copyButton(item.text));
+    case "uncommitted":
+      return drawUncommitted(item);
   }
+}
+
+/** The uncommitted changes a Change request waits on: the files, as `git diff --stat` counts them, and the choice. */
+function drawUncommitted(item: Extract<Item, { kind: "uncommitted" }>): HTMLElement {
+  const changed = new Set(item.files.map((file) => file.path));
+  const unsaved = new Set(item.unsaved);
+  const count = new Set([...changed, ...unsaved]).size;
+  const files = `${count} file${count === 1 ? "" : "s"}`;
+  const link = (path: string): HTMLElement => h("a", { className: "code-link", "data-ref": path, href: "#" }, path);
+  const list = h(
+    "ul",
+    { className: "change-list" },
+    ...item.files.map((file) =>
+      h(
+        "li",
+        {},
+        link(file.path),
+        file.lines !== undefined && file.lines.added > 0 && h("span", { className: "added" }, ` +${file.lines.added}`),
+        file.lines !== undefined && file.lines.removed > 0 && h("span", { className: "removed" }, ` −${file.lines.removed}`),
+        file.untracked && h("span", { className: "muted" }, " new"),
+        unsaved.has(file.path) && h("span", { className: "muted" }, " not saved"),
+        !file.untracked && " ",
+        !file.untracked && h("button", { className: "link-button", "data-action": "diff", "data-path": file.path, title: "Open the git diff" }, "diff"),
+      ),
+    ),
+    ...item.unsaved.filter((path) => !changed.has(path)).map((path) => h("li", {}, link(path), h("span", { className: "muted" }, " not saved"))),
+  );
+  if (item.status === "pending") {
+    const decide = (decision: Approval, label: string, primary: boolean, title: string): HTMLButtonElement =>
+      h("button", { className: primary ? "primary" : "secondary", "data-action": "approve", "data-id": item.id, "data-decision": decision, title }, label);
+    return h(
+      "div",
+      { className: "item card uncommitted pending" },
+      h("div", { className: "card-head" }, h("span", { className: "card-title" }, "Uncommitted changes"), h("span", { className: "muted" }, files)),
+      list,
+      h("p", { className: "uncommitted-note muted" }, "Git will show this change mixed in with them."),
+      h(
+        "div",
+        { className: "buttons" },
+        decide("once", "Send anyway", true, "Send the change request to the model"),
+        decide("deny", "Cancel", false, "Don't send it: your message goes back in the box"),
+      ),
+    );
+  }
+  const outcome = item.status === "sent" ? `Sent despite uncommitted changes in ${files}` : `Not sent, because of uncommitted changes in ${files}. Your message is back in the box.`;
+  return h("div", { className: "item uncommitted done" }, details(item.id, "files", h("span", {}, outcome), list));
 }
 
 function nearBottom(): boolean {

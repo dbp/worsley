@@ -92,7 +92,20 @@ export interface TurnHandlers {
   status?(text: string): void;
 }
 
-export class ChatError extends Error {}
+export class ChatError extends Error {
+  /** The HTTP status, when the server answered with an error. */
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** The server turned the request away for want of a key, or of a good one. */
+export function refusedKey(err: unknown): boolean {
+  return err instanceof ChatError && (err.status === 401 || err.status === 403);
+}
 
 /**
  * The prompt didn't fit the model's context window. `limit` is the
@@ -311,6 +324,31 @@ export interface ModelInfo {
  * The models an endpoint offers, from its `/models`. From OpenRouter, only
  * those that take tools, since Worsley can't work without them.
  */
+/** What a key has spent, in US dollars, in the current UTC day, week (from Monday) and month. */
+export interface Spend {
+  today: number;
+  week: number;
+  month: number;
+}
+
+/**
+ * What the endpoint's key has spent, from `/key`, as OpenRouter reports it;
+ * undefined from a server that doesn't.
+ */
+export async function spendOf(endpoint: Endpoint, signal: AbortSignal): Promise<Spend | undefined> {
+  try {
+    const response = await fetch(`${trimSlash(endpoint.baseUrl)}/key`, { headers: headersFor(endpoint), signal });
+    if (!response.ok) {
+      return undefined;
+    }
+    const data = ((await response.json()) as { data?: { usage_daily?: unknown; usage_weekly?: unknown; usage_monthly?: unknown } } | null)?.data;
+    const [today, week, month] = [data?.usage_daily, data?.usage_weekly, data?.usage_monthly];
+    return typeof today === "number" && typeof week === "number" && typeof month === "number" ? { today, week, month } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function listModels(endpoint: Endpoint, signal: AbortSignal): Promise<ModelInfo[]> {
   const url = `${trimSlash(endpoint.baseUrl)}/models`;
   let response: Response;
@@ -324,7 +362,7 @@ export async function listModels(endpoint: Endpoint, signal: AbortSignal): Promi
   }
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new ChatError(`${url} answered ${response.status}: ${describeError(text) ?? response.statusText}`);
+    throw new ChatError(`${url} answered ${response.status}: ${describeError(text) ?? response.statusText}`, response.status);
   }
   const json = (await response.json()) as { data?: unknown };
   const models: ModelInfo[] = [];
@@ -408,7 +446,7 @@ async function post(
       continue;
     }
     const full = `${endpoint.baseUrl} answered ${response.status}: ${message}`;
-    throw asOverflow(full, parseJson(text)) ?? new ChatError(full);
+    throw asOverflow(full, parseJson(text)) ?? new ChatError(full, response.status);
   }
 }
 
@@ -452,9 +490,14 @@ function parseJson(text: string): unknown {
   }
 }
 
+/** A key as given, without a "Bearer " copied along with it from a header. */
+export function bareKey(text: string): string {
+  return text.trim().replace(/^bearer\s+/i, "").trim();
+}
+
 function headersFor(endpoint: Endpoint): Record<string, string> {
   return {
-    ...(endpoint.apiKey ? { Authorization: `Bearer ${endpoint.apiKey}` } : {}),
+    ...(endpoint.apiKey ? { Authorization: `Bearer ${bareKey(endpoint.apiKey)}` } : {}),
     ...endpoint.headers,
   };
 }

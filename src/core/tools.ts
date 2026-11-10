@@ -56,8 +56,12 @@ export interface TourStep extends CodeLocation {
   summary: string;
 }
 
+/** A tour of how the codebase is put together, or a walk through something in the order it happens. */
+export type TourKind = "structure" | "walkthrough";
+
 export interface TourPlan {
   title: string;
+  kind: TourKind;
   steps: TourStep[];
 }
 
@@ -506,9 +510,14 @@ const showLocations: Tool = {
 const presentTour: Tool = {
   spec: spec(
     "present_tour",
-    "Start a step-by-step tour of the code for the user. Each step opens a range of code in their editor, and you'll be asked to explain each step when they reach it. Make the steps small (one function, class or seam each) and order them so each builds on the ones before.",
+    "Start a step-by-step tour of the code for the user. Each step opens a range of code in their editor, and you'll be asked to explain each step when they reach it. Order the steps so that each builds on the ones before.",
     {
       title: { type: "string", description: "What the tour covers." },
+      kind: {
+        type: "string",
+        enum: ["structure", "walkthrough"],
+        description: "structure: how the codebase is put together, through its components and what separates and connects them. walkthrough: a feature, a flow or a change, in the order it happens.",
+      },
       steps: {
         type: "array",
         items: {
@@ -524,13 +533,17 @@ const presentTour: Tool = {
         },
       },
     },
-    ["title", "steps"],
+    ["title", "kind", "steps"],
   ),
   modes: ["ask"],
   refusal: "Tours are for ask requests. Finish the change, and summarize it with links.",
   describe: () => ({ icon: "outline", summary: "Planning a tour", hidden: true }),
   async run(args, ctx) {
     const title = text(args, "title");
+    const kind = text(args, "kind");
+    if (kind !== "structure" && kind !== "walkthrough") {
+      throw new ToolError(`kind must be "structure" or "walkthrough", not "${kind}".`);
+    }
     const raw = args.steps;
     if (!Array.isArray(raw) || raw.length === 0) {
       throw new ToolError("steps must be a non-empty array of {path, start_line, end_line, title, summary}.");
@@ -548,7 +561,7 @@ const presentTour: Tool = {
     if (problems.length > 0) {
       throw new ToolError(`The tour wasn't shown, because some steps are wrong:\n${problems.join("\n")}\nFix them and call present_tour again.`);
     }
-    ctx.ui.presentTour({ title, steps });
+    ctx.ui.presentTour({ title, kind, steps });
     return {
       content: `The tour is open in the panel, with ${plural(steps.length, "step")}, and the user steps through it in the editor. You'll be asked to explain each step when they reach it, so don't explain the steps now: reply with one or two sentences that introduce the tour.`,
       display: { icon: "outline", summary: title, hidden: true },

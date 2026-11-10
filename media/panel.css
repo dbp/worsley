@@ -569,8 +569,30 @@ button.copy:hover {
   font-size: 0.95em;
 }
 
-.approval.pending {
+.approval.pending,
+.uncommitted.pending {
   border-color: var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-foreground));
+}
+
+.change-list .added {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+}
+
+.change-list .removed {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39);
+}
+
+.uncommitted-note {
+  margin: 4px 0 6px;
+}
+
+.item.uncommitted.done {
+  font-size: 0.9em;
+  color: var(--muted);
+}
+
+.item.uncommitted.done .change-list {
+  margin: 4px 0 0 14px;
 }
 
 .approval.denied .card-title {

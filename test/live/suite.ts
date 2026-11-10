@@ -17,8 +17,9 @@ import { TOUR_REQUEST } from "../../src/core/prompts";
  * - worsley-change: a change to Worsley's source, with its unit tests.
  *
  * The code comes from copies made once in OUT/fixtures, so every model sees
- * the same files; each change runs in its own fresh copy. A task whose
- * result exists is skipped, so a stopped run picks up where it left off.
+ * the same files; each change runs in its own fresh copy. Each copy is a git
+ * repository of its own, as a workspace would be. A task whose result exists
+ * is skipped, so a stopped run picks up where it left off.
  *
  *   node out/test/live/suite.js --out DIR --model ID [--tasks a,b] [--extra JSON] [--change-extra JSON] [--label NAME] [--task-minutes N]
  *   node out/test/live/suite.js --out DIR --summary
@@ -63,9 +64,11 @@ interface Task {
   check(root: string, report: Report): string[];
 }
 
-/** Builds, packages, caches and these results stay behind. */
+/** Builds, packages, caches and these results, which copies leave behind. */
+const LEFT_BEHIND = ["node_modules", "out", "dist", ".vscode-test", "__pycache__", "live-results"];
+
 function skipped(name: string): boolean {
-  return /^(node_modules|out|dist|\.vscode-test|__pycache__|live-results)$/.test(name) || name.endsWith(".vsix");
+  return name === ".git" || LEFT_BEHIND.includes(name) || name.endsWith(".vsix");
 }
 
 function copy(from: string, to: string): void {
@@ -78,7 +81,28 @@ function copy(from: string, to: string): void {
   }
 }
 
-/** The fixtures: the sample, and Worsley's source as it is now, with its packages linked in. */
+/**
+ * Makes `dir` a git repository of its own, with what it holds committed.
+ * The runner lists a workspace's files with git, and OUT may be inside a
+ * repository that ignores it, which would hide every file. What copies
+ * leave behind is ignored here too, as is what the tasks write or link in,
+ * such as Python's caches or Worsley's node_modules.
+ */
+function repository(dir: string): void {
+  if (fs.existsSync(path.join(dir, ".git"))) {
+    return;
+  }
+  const git = (...args: string[]): void => {
+    execFileSync("git", ["-c", "user.email=suite@example.com", "-c", "user.name=Worsley's suite", "-c", "commit.gpgsign=false", ...args], { cwd: dir, stdio: "ignore" });
+  };
+  git("init", "-q");
+  fs.mkdirSync(path.join(dir, ".git", "info"), { recursive: true });
+  fs.appendFileSync(path.join(dir, ".git", "info", "exclude"), [...LEFT_BEHIND, "*.vsix", ""].join("\n"));
+  git("add", "-A");
+  git("commit", "-q", "--no-verify", "-m", "The code as the tasks start");
+}
+
+/** The fixtures: the sample, and Worsley's source as it is now. */
 function makeFixtures(): void {
   if (!fs.existsSync(path.join(FIXTURES, "shop"))) {
     copy(path.join(ROOT, "samples", "shop"), path.join(FIXTURES, "shop"));
@@ -87,6 +111,8 @@ function makeFixtures(): void {
     copy(ROOT, path.join(FIXTURES, "worsley"));
     fs.rmSync(path.join(FIXTURES, "worsley", "samples"), { recursive: true, force: true });
   }
+  repository(path.join(FIXTURES, "shop"));
+  repository(path.join(FIXTURES, "worsley"));
 }
 
 function linkPackages(worsley: string): void {
@@ -205,6 +231,7 @@ const TASKS: Task[] = [
     name: "shop-change",
     prepare: (work) => {
       copy(path.join(FIXTURES, "shop"), work);
+      repository(work);
       return work;
     },
     args: () => ["--mode", "change", "--test-command", "python3 -m unittest -q", "--select", "shop/pricing.py:5-9"],
@@ -233,6 +260,7 @@ const TASKS: Task[] = [
     name: "worsley-change",
     prepare: (work) => {
       copy(path.join(FIXTURES, "worsley"), work);
+      repository(work);
       linkPackages(work);
       return work;
     },
@@ -298,7 +326,7 @@ function runTask(task: Task, dir: string): Promise<void> {
           problems = [...stopped, `the check failed: ${err instanceof Error ? err.message : String(err)}`];
         }
         if (task.name.endsWith("change")) {
-          const diff = run(`diff -ruN --exclude=node_modules --exclude=out --exclude=__pycache__ ${JSON.stringify(path.join(FIXTURES, task.name.split("-")[0] as string))} ${JSON.stringify(root)} || true`, dir);
+          const diff = run(`diff -ruN --exclude=.git --exclude=node_modules --exclude=out --exclude=__pycache__ ${JSON.stringify(path.join(FIXTURES, task.name.split("-")[0] as string))} ${JSON.stringify(root)} || true`, dir);
           fs.writeFileSync(path.join(dir, `${task.name}.diff`), diff.output);
         }
       }

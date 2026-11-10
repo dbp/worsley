@@ -161,14 +161,17 @@ describe("the tools", () => {
     const ctx = toolContext(new DiskWorkspace(tempFolder(project)), { ui, mode: "ask" });
     const step = (p: string, start: number, end: number, title: string): Args => ({ path: p, start_line: start, end_line: end, title, summary: `About ${title}.` });
     await assert.rejects(
-      tool("present_tour")({ title: "The shop", steps: [step("src/shop/cart.py", 4, 7, "Items"), step("src/shop/basket.py", 1, 2, "Baskets")] }, ctx),
+      tool("present_tour")({ title: "The shop", kind: "walkthrough", steps: [step("src/shop/cart.py", 4, 7, "Items"), step("src/shop/basket.py", 1, 2, "Baskets")] }, ctx),
       /The tour wasn't shown, because some steps are wrong:\nsteps\[1\]: There is no file src\/shop\/basket.py/,
     );
     assert.deepEqual(ui.tours, []);
-    const outcome = await tool("present_tour")({ title: "The shop", steps: [step("src/shop/cart.py", 4, 7, "Items"), step("tests/test_cart.py", 4, 5, "Testing totals")] }, ctx);
+    await assert.rejects(tool("present_tour")({ title: "The shop", steps: [step("src/shop/cart.py", 4, 7, "Items")] }, ctx), /kind is required/);
+    await assert.rejects(tool("present_tour")({ title: "The shop", kind: "overview", steps: [step("src/shop/cart.py", 4, 7, "Items")] }, ctx), /kind must be "structure" or "walkthrough", not "overview"/);
+    const outcome = await tool("present_tour")({ title: "The shop", kind: "walkthrough", steps: [step("src/shop/cart.py", 4, 7, "Items"), step("tests/test_cart.py", 4, 5, "Testing totals")] }, ctx);
     assert.deepEqual(ui.tours, [
       {
         title: "The shop",
+        kind: "walkthrough",
         steps: [
           { path: "src/shop/cart.py", start: 4, end: 7, title: "Items", summary: "About Items." },
           { path: "tests/test_cart.py", start: 4, end: 5, title: "Testing totals", summary: "About Testing totals." },
@@ -176,6 +179,12 @@ describe("the tools", () => {
       },
     ]);
     assert.match(outcome.content, /don't explain the steps now/);
+    await tool("present_tour")({ title: "How the shop is built", kind: "structure", steps: [step("src/shop/cart.py", 4, 7, "The cart")] }, ctx);
+    assert.deepEqual(ui.tours[1], {
+      title: "How the shop is built",
+      kind: "structure",
+      steps: [{ path: "src/shop/cart.py", start: 4, end: 7, title: "The cart", summary: "About The cart." }],
+    });
   });
 
   it("say when there is no language support", async () => {

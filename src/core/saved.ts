@@ -16,7 +16,6 @@ export interface SavedThread {
   seen: string[];
   /** What of each visible file was sent, as hashes. */
   sent: [string, string][];
-  changedInThread: string[];
   lastChanges: ChangedFile[];
   warnedGit: boolean;
   /** The places of each list of locations, for Peek all. */
@@ -32,7 +31,7 @@ export function parseSaved(text: string): SavedThread | undefined {
   } catch {
     return undefined;
   }
-  const lists = [value?.items, value?.messages, value?.seen, value?.sent, value?.changedInThread, value?.lastChanges, value?.locations];
+  const lists = [value?.items, value?.messages, value?.seen, value?.sent, value?.lastChanges, value?.locations];
   if (value?.version !== 1 || !lists.every(Array.isArray) || typeof value.nextId !== "number") {
     return undefined;
   }

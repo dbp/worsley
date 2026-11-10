@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
-import { listModels } from "../core/chat";
+import { listModels, refusedKey } from "../core/chat";
 import { quoteWords } from "../core/commandLine";
 import { errorText } from "../core/errorText";
 import { TOUR_REQUEST } from "../core/prompts";
+import { remember, type ModelChoice } from "../core/recent";
 import type { Highlighter } from "./highlight";
 import type { PanelProvider } from "./panel";
 import type { Session } from "./session";
@@ -36,9 +37,17 @@ export function registerCommands(
     await panel.focus("ask");
     await session.send(TOUR_REQUEST, "ask");
   });
+  register("worsley.reviewFile", async () => {
+    await panel.focus("ask");
+    await session.reviewChanges("file");
+  });
+  register("worsley.reviewAll", async () => {
+    await panel.focus("ask");
+    await session.reviewChanges("all");
+  });
   register("worsley.newThread", () => session.reset());
   register("worsley.stop", () => session.stop());
-  register("worsley.pickBackend", () => pickBackend(context.secrets));
+  register("worsley.pickBackend", () => pickBackend(context.secrets, context.globalState));
   register("worsley.setApiKey", () => setApiKey(context.secrets));
   register("worsley.allowedCommands", () => reviewAllowed(session));
   register("worsley.clearHighlights", () => deps.highlighter.clear());
@@ -90,36 +99,137 @@ async function chooseFrom(backends: settings.Backend[], title: string): Promise<
   return (await vscode.window.showQuickPick(items, { title }))?.backend;
 }
 
-/** A backend, then one of the models its server lists (or any model id typed in). */
-export async function pickBackend(secrets: vscode.SecretStorage): Promise<void> {
+/** The models chosen lately, latest first, kept for the user rather than the workspace. */
+const RECENT_KEY = "worsley.recentModels";
+
+/**
+ * A model chosen lately, which switches at once; or a backend, or a server
+ * to add as one, then one of the models its server lists (or any model id
+ * typed in).
+ */
+export async function pickBackend(secrets: vscode.SecretStorage, state: vscode.Memento): Promise<void> {
   const all = settings.backends();
-  if (all.length === 0) {
-    await vscode.commands.executeCommand("workbench.action.openSettings", "worsley.backends");
+  const active = settings.activeBackend();
+  const saved = state.get<ModelChoice[]>(RECENT_KEY) ?? [];
+  // The model in use comes first, even when it was set by hand.
+  const recent = (active !== undefined ? remember(saved, { backend: active.name, model: active.model }) : saved).filter((c) =>
+    all.some((b) => b.name === c.backend),
+  );
+  type Item = vscode.QuickPickItem & { backend?: settings.Backend; choice?: ModelChoice };
+  const items: Item[] = [
+    { label: "Recent", kind: vscode.QuickPickItemKind.Separator },
+    ...recent.map((choice, i) => ({ label: choice.model, description: i === 0 && active !== undefined ? `${choice.backend} · in use` : choice.backend, choice })),
+    { label: "Another model", kind: vscode.QuickPickItemKind.Separator },
+    ...all.map((b) => ({ label: b.name, description: "choose a model", detail: b.baseUrl, backend: b })),
+    { label: "$(add) Add a server…", detail: "Any OpenAI-compatible endpoint with tool calls, such as llama.cpp or vLLM on another machine" },
+  ];
+  const picked = await vscode.window.showQuickPick(items, { title: "Worsley: Choose a Model", matchOnDescription: true });
+  if (picked === undefined) {
     return;
   }
-  const backend = await chooseFrom(all, "Worsley: Choose a Backend");
-  if (backend === undefined) {
-    return;
+  let chosen: ModelChoice;
+  if (picked.choice !== undefined) {
+    chosen = picked.choice;
+    await settings.chooseBackend(chosen.backend, chosen.model);
+  } else {
+    const backend = picked.backend ?? (await newServer());
+    if (backend === undefined) {
+      return;
+    }
+    await askForKeyIfRefused(backend, secrets);
+    const model = await pickModel(backend, secrets);
+    if (model === undefined) {
+      return;
+    }
+    if (picked.backend !== undefined) {
+      await settings.chooseBackend(backend.name, model);
+    } else {
+      await settings.addBackend({ ...backend, model });
+    }
+    chosen = { backend: backend.name, model };
   }
-  const model = await pickModel(backend, secrets);
-  if (model !== undefined) {
-    await settings.chooseBackend(backend.name, model);
+  await state.update(RECENT_KEY, remember(recent, chosen));
+}
+
+/**
+ * Whether `backend`'s server takes Worsley as it is, with the key it has or
+ * with none. If it turns Worsley away, the user is asked for a key before
+ * the models are listed.
+ */
+async function askForKeyIfRefused(backend: settings.Backend, secrets: vscode.SecretStorage): Promise<void> {
+  const endpoint = await settings.endpointFor(backend, secrets);
+  const refused = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Worsley: checking ${backend.name}` }, () =>
+    listModels(endpoint, AbortSignal.timeout(10_000)).then(
+      () => false,
+      (err: unknown) => refusedKey(err),
+    ),
+  );
+  if (refused) {
+    const why = endpoint.apiKey === undefined ? "without a key, so it needs one" : "with the key stored for it, so it needs another";
+    await settings.askForKey(backend, secrets, `${backend.name} turned Worsley away ${why}. `);
   }
+}
+
+/** A server to add: its address and a name for it, with the model still to choose. */
+async function newServer(): Promise<settings.Backend | undefined> {
+  const address = await vscode.window.showInputBox({
+    title: "Worsley: Add a Server (1/2)",
+    prompt: "Its OpenAI-compatible address, up to and including the /v1",
+    placeHolder: "http://gpu-box:8080/v1",
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const url = value.trim();
+      if (!/^https?:\/\/[^\s/]+/i.test(url)) {
+        return "An http:// or https:// address, such as http://gpu-box:8080/v1";
+      }
+      return /\/v\d+\/?$/.test(url) ? undefined : { message: "Most servers' addresses end in /v1.", severity: vscode.InputBoxValidationSeverity.Warning };
+    },
+  });
+  if (address === undefined) {
+    return undefined;
+  }
+  const baseUrl = address.trim().replace(/\/+$/, "");
+  const taken = new Set(settings.backends().map((b) => b.name));
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    host = "server";
+  }
+  let suggested = host;
+  for (let n = 2; taken.has(suggested); n++) {
+    suggested = `${host} ${n}`;
+  }
+  const name = await vscode.window.showInputBox({
+    title: "Worsley: Add a Server (2/2)",
+    prompt: "A name for it, as Worsley shows it",
+    value: suggested,
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const trimmed = value.trim();
+      return trimmed === "" ? "A name, such as the machine's" : taken.has(trimmed) ? `There is a backend called ${trimmed} already.` : undefined;
+    },
+  });
+  if (name === undefined) {
+    return undefined;
+  }
+  return { name: name.trim(), baseUrl, model: "" };
 }
 
 function pickModel(backend: settings.Backend, secrets: vscode.SecretStorage): Promise<string | undefined> {
   const quickPick = vscode.window.createQuickPick();
   quickPick.title = `Worsley: Choose a Model on ${backend.name}`;
-  quickPick.placeholder = `Filter the list, or type a model's id (now ${backend.model})`;
+  quickPick.placeholder = backend.model !== "" ? `Filter the list, or type a model's id (now ${backend.model})` : "Filter the list, or type a model's id";
   quickPick.matchOnDescription = true;
   quickPick.busy = true;
-  const current: vscode.QuickPickItem = { label: backend.model, description: "in use" };
+  // A server just added has no model yet.
+  const current: vscode.QuickPickItem[] = backend.model !== "" ? [{ label: backend.model, description: "in use" }] : [];
   let listed: vscode.QuickPickItem[] = [];
   const refresh = (): void => {
     const typed = quickPick.value.trim();
     const known = typed === backend.model || listed.some((item) => item.label === typed);
     const custom = typed !== "" && !known ? [{ label: typed, description: "use this id" }] : [];
-    quickPick.items = [...custom, current, ...listed.filter((item) => item.label !== backend.model)];
+    quickPick.items = [...custom, ...current, ...listed.filter((item) => item.label !== backend.model)];
   };
   refresh();
   quickPick.onDidChangeValue(refresh);
@@ -159,21 +269,12 @@ function pickModel(backend: settings.Backend, secrets: vscode.SecretStorage): Pr
 }
 
 async function setApiKey(secrets: vscode.SecretStorage): Promise<void> {
-  const remote = settings.backends().filter((b) => !settings.isLocal(b));
-  const backend = await chooseFrom(remote.length > 0 ? remote : settings.backends(), "Worsley: Set the API Key for…");
+  const backend = await chooseFrom(settings.backends(), "Worsley: Set the API Key for…");
   if (backend === undefined) {
     return;
   }
-  const fallback = backend.apiKeyEnv !== undefined ? ` and use ${backend.apiKeyEnv} instead` : "";
-  const key = await vscode.window.showInputBox({
-    title: `Worsley: API Key for ${backend.name}`,
-    prompt: `Kept in VS Code's secret storage. Leave it empty to remove the stored key${fallback}.`,
-    password: true,
-    ignoreFocusOut: true,
-  });
-  if (key === undefined) {
-    return;
+  const key = await settings.askForKey(backend, secrets);
+  if (key !== undefined) {
+    void vscode.window.showInformationMessage(key !== "" ? `Worsley: saved the key for ${backend.name}.` : `Worsley: removed the key for ${backend.name}.`);
   }
-  await settings.storeApiKey(backend, key.trim(), secrets);
-  void vscode.window.showInformationMessage(key.trim() !== "" ? `Worsley: saved the key for ${backend.name}.` : `Worsley: removed the key for ${backend.name}.`);
 }

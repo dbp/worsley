@@ -14,10 +14,14 @@ explanation can range across files and link to each place it is about.
 - **Ask where things are.** "Where do sessions expire?" gives a list of
   every relevant place, each with a note and its first lines; clicking one
   opens it, and *Peek all* shows them in the editor's peek view.
-- **Take a tour.** For a big question ("help me understand this codebase",
-  "how does a request get handled?") the model plans a tour of small steps,
-  one function, class or seam each. Each step opens in the editor and is
-  explained when you reach it, so the explanation can follow on from your
+- **Take a tour.** *Tour this codebase* (**Worsley: Tour the Codebase**)
+  goes through its structure rather than its details: the components and
+  which way they depend on each other, the interfaces and central types that
+  separate and connect them, the unit tests that hold those boundaries in
+  place, and, last, how modular it really is. A question about how something
+  works ("how does a request get handled?") gets a walk through the code
+  instead, a function or class at a time. Each step opens in the editor and
+  is explained when you reach it, so the explanation can follow on from your
   questions along the way. Questions asked mid-tour get just an answer; the
   tour moves on only when you press *Next*.
 - **Change code.** Select code, press `Ctrl+Alt+E` (`⌘⌥E`) and say what to
@@ -29,12 +33,23 @@ explanation can range across files and link to each place it is about.
   `cargo test …` for `cargo test` with any arguments, or for
   `grep -rn foo src | head`, both `grep …` and `head …`. **Worsley: Allowed
   Commands…** lists what runs without asking, to take any of it back.
-  Nothing is staged or committed. Afterwards there is a list of changed
-  files, each with its git diff, and *Walk me through it*, which tours the
-  changes.
+  Nothing is staged or committed. When something already isn't committed,
+  the request waits before anything reaches the model: a card lists those
+  files, with the lines each has gained and lost, since git would show this
+  change mixed in with them. *Send anyway* sends it, and *Cancel* puts your
+  message back in the box. Afterwards there is a list of changed files, each
+  with its git diff, and *Walk me through it*, which tours the changes.
+- **Review your own changes.** The first two buttons at the top of the
+  panel ask for a light review of what you have changed by hand and not
+  committed: in the file open in the editor, or in the whole workspace. It is
+  an Ask, with the `git diff` (new files whole): not about style, but whether
+  the changes call for others, such as callers, tests or documentation that
+  now disagree, or have implications worth knowing. Edits not yet saved are
+  left out, and the panel says which.
 
 The backend is any OpenAI-compatible chat endpoint with tool calls: a local
-llama.cpp `llama-server` (the default) or OpenRouter.
+llama.cpp `llama-server` (the default), OpenRouter, or a server of your own
+elsewhere, such as llama.cpp or vLLM on another machine.
 
 ## Trying it
 
@@ -57,13 +72,27 @@ the router in `~/opt/llama.cpp/router.sh`, and asks for
 `Qwen3.6-35B-A3B-Q4_K_M`, thinking only when it changes code. For OpenRouter, run **Worsley:
 Set API Key…** (or set `OPENROUTER_API_KEY` before starting VS Code), then
 **Worsley: Choose Model…**, which lists the server's models: for llama.cpp,
-its presets; for OpenRouter, the models that take tools.
+its presets; for OpenRouter, the models that take tools. It lists first the
+last six models you have used, each with its backend, so that going back to
+one is a single click; clicking the model's name below the message box, or
+in the status bar, opens it too. With OpenRouter the status bar also shows
+what the key has spent today, as OpenRouter's `/key` reports it, and its
+tooltip the week and month. OpenRouter's day is the UTC day, so it starts
+in the evening in America: the tooltip says when.
+
+For a server of your own, choose *Add a server…* in **Worsley: Choose
+Model…**: it asks for the address, up to and including `/v1`, and a name,
+then lists that server's models. If the server turns Worsley away for want
+of a key, Worsley asks for one first, and keeps it in VS Code's secret
+storage; a request turned away later offers **Worsley: Set API Key…**. When
+the server is down, a request says it couldn't connect, and **Worsley: Choose Model…** switches to another
+backend; the thread carries on with whichever model answers next.
 
 ## Settings
 
 | Setting | |
 | --- | --- |
-| `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`, and `contextTokens`, the model's context window, for a server that doesn't report it. User settings only, so a workspace can't send your code elsewhere. |
+| `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, the environment variable holding its key (a backend that names one is used only with a key; any other is sent one only if **Worsley: Set API Key…** has stored it), `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`, and `contextTokens`, the model's context window, for a server that doesn't report it. User settings only, so a workspace can't send your code elsewhere. |
 | `worsley.backend` | Which of them is in use. |
 | `worsley.testCommand` | The workspace's test command, such as `pytest -q`. It runs without asking. Empty: the model works out how the tests run, and each command needs approval. |
 | `worsley.commandTimeoutSeconds` | When a command is stopped (600). |
@@ -147,8 +176,10 @@ workspace.
 Edits are exact replacements (`old_string` → `new_string`), written to disk
 so git sees them and format-on-save doesn't rewrite them behind the model's
 back. Before a change, files with unsaved edits are saved, so the tests run
-on what you see, and the panel says if git already shows other changes. A
-model's reasoning is kept and sent back as the server sent it
+on what you see; the card about uncommitted changes lists them too, since
+they become part of what git shows. The card counts lines as `git diff
+--numstat` does, against the last commit, and counts a new file's lines
+whole. A model's reasoning is kept and sent back as the server sent it
 (`reasoning_content` for llama.cpp, `reasoning` and `reasoning_details` for
 OpenRouter). An error, and a tool call that failed, has a *Copy* button
 that copies its whole text. Links in a reply are checked once it is complete: a link to a
@@ -180,8 +211,9 @@ when they name one. A link to a folder reveals it in the Explorer.
 - `test/integration/`: VS Code driven against the fake model, in a small
   JavaScript project: an Ask with a selection, the language server's
   references and a list of locations; link checks; a change with two edits
-  and the tests; a command that needs approval; a two-step tour; and the
-  thread kept for the next window.
+  and the tests; a review of those changes, of one file and of all; a change
+  held back by uncommitted ones, cancelled and then sent anyway; a command that needs approval; a two-step tour of the
+  structure; and the thread kept for the next window.
 - `test/live/`: one request against a real model from the command line, with
   the same prompts and tools but no language servers (`run.ts`, which can
   send a selection and report times, tokens and broken links as JSON), and
@@ -201,7 +233,7 @@ pnpm run live -- --root samples/shop "How is the total worked out?"
 pnpm run live -- --root samples/shop --mode change --test-command "python3 -m unittest -q" "Make discount codes case-sensitive"
 node out/test/live/suite.js --out live-results --model ID   # six tasks on one model, checked
 node out/test/live/suite.js --out live-results --summary    # a table of every model run so far
-node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|tour|empty, &theme=light
+node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|empty, &theme=light
 uv run scripts/icon-font.py # media/worsley.ttf, the status bar's sextant, from media/worsley.svg
 ```
 

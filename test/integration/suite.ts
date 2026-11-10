@@ -9,9 +9,11 @@ import type { HostMessage, Item } from "../../src/protocol";
  * Inside VS Code, against the fake model: ask about a selection (with the
  * editor's references and a list of locations), check the reply's links,
  * open one; keep the thread for the next window; change the code (two
- * edits, then the tests, which run without asking); commands that need
- * approval, one allowed by its class; and a two-step tour, each step
- * opening its code. test-electron calls `run`; a throw fails the run.
+ * edits, then the tests, which run without asking); review those changes,
+ * of one file and of all; hold the next change for the uncommitted one,
+ * cancel it, then send one anyway; commands that need approval, one allowed
+ * by its class; and a two-step tour of the structure, each step opening its
+ * code. test-electron calls `run`; a throw fails the run.
  */
 
 const WORKSPACE = process.env.WORSLEY_TEST_WORKSPACE ?? "";
@@ -46,6 +48,8 @@ function brief(item: Item): string {
       return `notice(${item.level}): ${item.text}`;
     case "step":
       return `step ${item.index + 1}: ${item.title}`;
+    case "uncommitted":
+      return `uncommitted(${item.status}): ${[...item.files.map((f) => f.path), ...item.unsaved].join(", ")}`;
   }
 }
 
@@ -144,13 +148,52 @@ async function scenario(): Promise<void> {
   assert.ok(items().some((i) => i.kind === "assistant" && i.text.includes("The tests pass.")));
   assert.equal(items().some((i) => i.kind === "notice" && i.level !== "info"), false, `no warnings: ${items().filter((i) => i.kind === "notice").map(brief).join("; ")}`);
 
+  // ---- A light review of those changes, as an Ask: of the file in the
+  // editor, then of them all. The panel shows the request; the model gets the diff.
+  await vscode.window.showTextDocument(vscode.Uri.file(path.join(WORKSPACE, "src/cart.js")));
+  await vscode.commands.executeCommand("worsley.reviewFile");
+  await idle();
+  const lastUser = (): Extract<Item, { kind: "user" }> | undefined => [...items()].reverse().find((i): i is Extract<Item, { kind: "user" }> => i.kind === "user");
+  const lastAnswer = (): string => [...items()].reverse().find((i): i is Extract<Item, { kind: "assistant" }> => i.kind === "assistant")?.text ?? "";
+  assert.deepEqual([lastUser()?.mode, lastUser()?.text], ["ask", "Review my uncommitted changes to src/cart.js."]);
+  assert.match(lastAnswer(), /^Reviewed src\/cart\.js: /);
+  const asked = [...session.snapshot.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  assert.match(asked, /<diff>\ndiff --git a\/src\/cart\.js b\/src\/cart\.js\n[\s\S]*\+function total\(items, discount = 0\) \{/);
+  await vscode.commands.executeCommand("worsley.reviewAll");
+  await idle();
+  assert.equal(lastUser()?.text, "Review my uncommitted changes.");
+  assert.match(lastAnswer(), /^Reviewed src\/cart\.js, test\/cart\.test\.js: /);
+
+  // ---- With that change not committed, the next one waits for the user to
+  // send it anyway, showing what git would mix in. Cancelled, nothing goes
+  // to the model and the message goes back in the box.
+  type UncommittedItem = Extract<Item, { kind: "uncommitted" }>;
+  const held = (): UncommittedItem | undefined => items().find((i): i is UncommittedItem => i.kind === "uncommitted" && i.status === "pending");
+  const status = (): string | undefined => [...posted].reverse().find((m): m is Extract<HostMessage, { type: "busy" }> => m.type === "busy")?.status;
+  const sentBefore = session.snapshot.messages.length;
+  void vscode.commands.executeCommand("worsley.change", "Rename total to sum");
+  const cancelled = await waitFor("the uncommitted changes", held);
+  assert.deepEqual(cancelled.files, [
+    { path: "src/cart.js", untracked: false, lines: { added: 2, removed: 2 } },
+    { path: "test/cart.test.js", untracked: false, lines: { added: 4, removed: 0 } },
+  ]);
+  assert.deepEqual(cancelled.unsaved, []);
+  assert.equal(status(), "Waiting for you to confirm…");
+  session.approve(cancelled.id, "deny");
+  await idle();
+  assert.equal(session.snapshot.messages.length, sentBefore, "nothing went to the model");
+  assert.equal(items().some((i) => i.kind === "user" && i.text === "Rename total to sum"), false);
+  assert.ok(posted.some((m) => m.type === "focus" && m.mode === "change" && m.text === "Rename total to sum"), "the message went back in the box");
+
   // ---- Any other command waits for approval, which can cover its class:
   // once git log … is allowed, the next git log runs without asking, and git status still asks.
   type ApprovalItem = Extract<Item, { kind: "approval" }>;
   const pending = (): ApprovalItem | undefined => items().find((i): i is ApprovalItem => i.kind === "approval" && i.status === "pending");
   void vscode.commands.executeCommand("worsley.change", "Look at the history");
-  const status = (): string | undefined => [...posted].reverse().find((m): m is Extract<HostMessage, { type: "busy" }> => m.type === "busy")?.status;
+  const sent = await waitFor("the uncommitted changes again", held);
+  session.approve(sent.id, "once");
   const first = await waitFor("an approval", pending);
+  assert.equal(sent.status, "sent");
   assert.equal(first.command, "git log --oneline -1");
   assert.deepEqual(first.scopes, ["git log …", "git log --oneline …", "exactly this command"]);
   assert.equal(first.scopes[first.scope], "git log …");
@@ -177,8 +220,12 @@ async function scenario(): Promise<void> {
   assert.equal(fs.existsSync(threadFile), false, "a new thread leaves nothing kept");
   assert.equal(items().length, 0);
   await vscode.commands.executeCommand("worsley.tour");
-  const explained = await waitFor("the first step's explanation", () => items().find((i) => i.kind === "assistant" && i.text.startsWith("Step 1:")));
+  const explained = await waitFor("the first step's explanation", () =>
+    items().find((i): i is Extract<Item, { kind: "assistant" }> => i.kind === "assistant" && i.text.startsWith("Step 1:")),
+  );
   await idle();
+  assert.equal(session.snapshot.tour?.title, "How the shop is built");
+  assert.match(explained.text, /explained as structure\.$/, "the tour of the codebase is a tour of its structure");
   // The tour opened the panel, whose script runs under the webview's CSP:
   // it drew the explanation and asked which of its links lead somewhere.
   await waitFor("the panel to load", () => panel.isReady);

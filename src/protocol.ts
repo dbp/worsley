@@ -37,6 +37,15 @@ export interface ChangedFile {
   created: boolean;
 }
 
+/** A file with changes that aren't committed. */
+export interface FileChange {
+  path: string;
+  /** New to git. */
+  untracked: boolean;
+  /** Since the last commit; not counted for a binary file. */
+  lines?: { added: number; removed: number };
+}
+
 /** One entry in the thread, as the panel draws it. Items are replaced whole by id. */
 export type Item =
   | { kind: "user"; id: string; mode: Mode; text: string; context: string[] }
@@ -75,6 +84,12 @@ export type Item =
       allowed?: string;
     }
   | { kind: "changes"; id: string; files: ChangedFile[] }
+  /**
+   * Before a Change request goes to the model: what is uncommitted, which git
+   * would show mixed in with the change, and files not yet saved, which the
+   * change saves first. The user sends the request anyway, or not.
+   */
+  | { kind: "uncommitted"; id: string; files: FileChange[]; unsaved: string[]; status: "pending" | "sent" | "cancelled" }
   | { kind: "notice"; id: string; level: "info" | "warning" | "error"; text: string };
 
 export interface TourView {

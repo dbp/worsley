@@ -9,7 +9,6 @@ function thread(fields: Partial<SavedThread>): SavedThread {
     messages: [{ role: "system", content: "You are a test." }],
     seen: [],
     sent: [],
-    changedInThread: [],
     lastChanges: [],
     warnedGit: false,
     locations: [],
@@ -22,7 +21,7 @@ describe("a saved thread", () => {
   it("is read back as it was written", () => {
     const saved = thread({
       items: [{ kind: "user", id: "i1", mode: "ask", text: "Where?", context: ["cart.py"] }],
-      tour: { plan: { title: "The shop", steps: [{ title: "Totals", summary: "How the total is worked out", path: "cart.py", start: 1, end: 9 }] }, current: 0, explained: [[0, "i2"]] },
+      tour: { plan: { title: "The shop", kind: "structure", steps: [{ title: "Totals", summary: "How the total is worked out", path: "cart.py", start: 1, end: 9 }] }, current: 0, explained: [[0, "i2"]] },
       seen: ["cart.py"],
       sent: [["cart.py", "abc123"]],
       locations: [["i3", [{ path: "cart.py", start: 3, end: 5, note: "adds up" }]]],

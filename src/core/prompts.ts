@@ -46,7 +46,11 @@ Every line you read goes into the conversation and has to be processed, which on
 - Look before you answer: search, outline, follow references, and read what they lead to. Base every claim on code you have read, and say so when you aren't sure.
 - Answer only what was asked, briefly. The user will ask follow-up questions.
 - When the question is where something happens, what uses something, or which places are involved, the answer is a list of places: call show_locations with every relevant place, each with a short note. The user clicks through that list in the editor, so don't write the places out again in your reply; add only what the list doesn't show, briefly.
-- When the user wants to understand something large (the whole codebase, a subsystem, how a feature works end to end), explore first, then call present_tour with a walk through it in order: 4 to 12 small steps, each one function, class or seam, ordered so that each builds on the ones before (usually the entry point first, then the core data, then the flows that use it). The user steps through the tour in the editor, and you'll be asked to explain each step when they reach it.
+
+# Tours
+When the user wants to understand something large, explore first, then call present_tour. The user steps through the tour in the editor, and you'll be asked to explain each step when they reach it.
+- A tour of the codebase as a whole is a tour of its structure (kind "structure"): the shape of the whole, not how each part is implemented. Find the components (packages, modules, layers) and which way the dependencies between them point; the interfaces, protocols, abstract classes and types through which components meet, and who implements and who uses each (find_references); the central data structures they share or pass between them; where they are put together, such as the entry point; and the unit tests that hold a boundary in place, by testing a component on its own or against stand-ins for its neighbours. Tests that run everything together say little about structure. Then plan 4 to 12 steps, each one boundary, interface, central type or test that pins a boundary down. Start where the components are put together, with a map of them and of how they depend on each other, and end with how modular the codebase is: where its boundaries are clean, and where parts are more coupled than their interfaces suggest.
+- For how a feature or a flow works, the tour walks through it (kind "walkthrough"): 4 to 12 small steps, each one function, class or seam, in the order things happen.
 
 # Changing code
 1. Read the code to change and understand what is being asked.
@@ -92,9 +96,13 @@ export function tourStepRequest(plan: TourPlan, index: number, code: string): st
   if (step === undefined) {
     throw new Error(`The tour has no step ${index + 1}.`);
   }
+  const explain =
+    plan.kind === "structure"
+      ? "Explain this step as part of the codebase's structure: what it separates or connects, what depends on it and what it depends on, what it lets change on its own, and how tightly the parts on either side are coupled. Leave out how the code works line by line. Keep it short (a few short paragraphs), and link to whatever implements or uses what this step shows rather than quoting it."
+      : "Explain this step: what the code does, how it connects to the steps before it, and what is worth noticing. Keep it short (a few short paragraphs) and link to related code rather than quoting it.";
   return `<tour_step number="${index + 1}" of="${plan.steps.length}">
 The user has reached step ${index + 1} of the tour "${plan.title}": ${step.title}, at ${formatHref(step)}. It is open in their editor.
-Explain this step: what the code does, how it connects to the steps before it, and what is worth noticing. Keep it short (a few short paragraphs) and link to related code rather than quoting it. Don't go on to later steps.
+${explain} Don't go on to later steps.
 Your plan for this step: ${step.summary}
 <code path="${step.path}" lines="${step.start}-${step.end}">
 ${code}
@@ -102,8 +110,30 @@ ${code}
 </tour_step>`;
 }
 
-/** What “Tour the Codebase” asks. */
-export const TOUR_REQUEST = "Give me a tour of this codebase: what it is for, how it is organized, and how its main parts work together.";
+/** What “Tour the Codebase” asks; the system prompt says what a tour of structure covers. */
+export const TOUR_REQUEST = "Give me a tour of how this codebase is structured: its components, what separates and connects them, and how tightly they are coupled.";
+
+/** Longer diffs are cut, and the model reads the files for the rest. */
+const REVIEW_DIFF_CHARS = 60_000;
+
+/** What a review of the user's own uncommitted changes shows in the panel: the changes to `file`, or all of them. */
+export function reviewTitle(file: string | undefined): string {
+  return file !== undefined ? `Review my uncommitted changes to ${file}.` : "Review my uncommitted changes.";
+}
+
+/** What the model is asked for a review, with the diff of the changes. */
+export function reviewRequest(file: string | undefined, diff: string): string {
+  let shown = diff;
+  let cut = "";
+  if (diff.length > REVIEW_DIFF_CHARS) {
+    shown = diff.slice(0, diff.lastIndexOf("\n", REVIEW_DIFF_CHARS) + 1);
+    const left = diff.slice(shown.length).split("\n").length - 1;
+    cut = `\n(The diff goes on for another ${left} lines, left out here: read the files for the rest.)`;
+  }
+  return `${reviewTitle(file)} I made them by hand, and haven't committed them. Review them lightly, for what they imply rather than their style: do they call for changes elsewhere, such as callers, implementations, tests, documentation or configuration that now disagree with them? Do they change behaviour in ways that matter, or leave something inconsistent or unhandled? Before you answer, look at the code around them and at what uses what they change, with find_references and search. Link to each place that needs attention, and say briefly if nothing else needs to change. Don't restate the diff.
+<diff>
+${shown}</diff>${cut}`;
+}
 
 /** What the "Walk me through it" button after a change asks. */
 export const WALK_CHANGES = "Walk me through the changes you just made, step by step, in the order that makes them easiest to follow.";

@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { readFile, stat } from "node:fs/promises";
+import * as path from "node:path";
+import type { FileChange } from "../protocol";
 
 /**
  * Read-only git: Worsley never stages, commits or changes branches. Changes
@@ -25,35 +28,91 @@ export async function isGitRepo(root: string): Promise<boolean> {
 }
 
 /**
- * Files in `root` with uncommitted changes, relative to `root`, or undefined
- * outside a repository. `root` may be a folder inside the repository; git
- * reports paths from the repository's top, so its prefix is taken off.
+ * The uncommitted changes in `root`, file by file, or undefined outside a
+ * repository: what each tracked file gained and lost since the last commit,
+ * staged or not, and each new file that git doesn't ignore, counted whole.
+ * `root` may be a folder inside the repository: only its files count, with
+ * paths relative to it.
  */
-export async function uncommittedFiles(root: string): Promise<string[] | undefined> {
-  const prefixResult = await git(root, ["rev-parse", "--show-prefix"]);
-  if (prefixResult.code !== 0) {
+export async function uncommittedChanges(root: string): Promise<FileChange[] | undefined> {
+  if (!(await isGitRepo(root))) {
     return undefined;
   }
-  const prefix = prefixResult.stdout.trim();
-  const result = await git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."]);
-  if (result.code !== 0) {
+  const numstat = ["diff", "--numstat", "-z", "--no-renames", "--relative"];
+  // Before the first commit there is only the index to compare with.
+  const committed = (await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"])).code === 0;
+  const changes = new Map<string, FileChange>();
+  for (const args of committed ? [[...numstat, "HEAD"]] : [[...numstat, "--cached"], numstat]) {
+    for (const change of parseNumstat((await git(root, args)).stdout)) {
+      const known = changes.get(change.path);
+      if (known === undefined) {
+        changes.set(change.path, change);
+      } else {
+        // Both staged and not, before the first commit.
+        const [a, b] = [known.lines, change.lines];
+        known.lines = a !== undefined && b !== undefined ? { added: a.added + b.added, removed: a.removed + b.removed } : undefined;
+      }
+    }
+  }
+  const untracked = await git(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  for (const file of untracked.stdout.split("\0").filter((f) => f !== "")) {
+    const added = await countLines(path.join(root, file));
+    changes.set(file, { path: file, untracked: true, lines: added === undefined ? undefined : { added, removed: 0 } });
+  }
+  return [...changes.values()];
+}
+
+/**
+ * The uncommitted changes in `root`, or in its `file` alone, as a diff, or
+ * undefined outside a repository: what tracked files changed since the last
+ * commit, staged or not, then each new file that git doesn't ignore, whole.
+ * Paths are relative to `root`, as in `uncommittedChanges`.
+ */
+export async function uncommittedDiff(root: string, file?: string): Promise<string | undefined> {
+  if (!(await isGitRepo(root))) {
     return undefined;
   }
-  const files: string[] = [];
-  const fields = result.stdout.split("\0");
-  for (let i = 0; i < fields.length; i++) {
-    const entry = fields[i] ?? "";
-    if (entry.length < 4) {
-      continue;
-    }
-    const path = entry.slice(3);
-    if (path.startsWith(prefix)) {
-      files.push(path.slice(prefix.length));
-    }
-    // A rename's original path follows as its own field.
-    if (entry[0] === "R" || entry[0] === "C") {
-      i++;
-    }
+  const only = file !== undefined ? ["--", file] : [];
+  const diff = ["diff", "--no-color", "--no-ext-diff", "--relative"];
+  const committed = (await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"])).code === 0;
+  const parts: string[] = [];
+  for (const args of committed ? [[...diff, "HEAD"]] : [[...diff, "--cached"], diff]) {
+    parts.push((await git(root, [...args, ...only])).stdout);
   }
-  return files;
+  const untracked = await git(root, ["ls-files", "--others", "--exclude-standard", "-z", ...only]);
+  for (const newFile of untracked.stdout.split("\0").filter((f) => f !== "")) {
+    // Against nothing, which leaves the index alone.
+    parts.push((await git(root, ["diff", "--no-color", "--no-ext-diff", "--no-index", "--", "/dev/null", newFile])).stdout);
+  }
+  return parts.join("");
+}
+
+/** `git diff --numstat -z`: lines added, lines removed and the path, with `-` for a binary file. */
+export function parseNumstat(text: string): FileChange[] {
+  return text.split("\0").flatMap((entry) => {
+    const match = /^(-|\d+)\t(-|\d+)\t(.+)$/s.exec(entry);
+    if (match === null) {
+      return [];
+    }
+    const [, added = "-", removed = "-", file = ""] = match;
+    const lines = added === "-" || removed === "-" ? undefined : { added: Number(added), removed: Number(removed) };
+    return [{ path: file, untracked: false, lines }];
+  });
+}
+
+/** The lines of a new file, unless it is binary or too big to read for this. */
+async function countLines(file: string): Promise<number | undefined> {
+  try {
+    if ((await stat(file)).size > 8 * 1024 * 1024) {
+      return undefined;
+    }
+    const data = await readFile(file);
+    if (data.subarray(0, 8000).includes(0)) {
+      return undefined;
+    }
+    const breaks = data.reduce((n, byte) => (byte === 0x0a ? n + 1 : n), 0);
+    return data.length > 0 && data[data.length - 1] !== 0x0a ? breaks + 1 : breaks;
+  } catch {
+    return undefined;
+  }
 }

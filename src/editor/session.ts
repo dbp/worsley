@@ -7,10 +7,10 @@ import { TokenGauge, withRoom, type Compaction } from "../core/compact";
 import { contextChips, formatContext } from "../core/context";
 import { errorText } from "../core/errorText";
 import { numberLines, splitLines, summarizeFiles } from "../core/files";
-import { isGitRepo, uncommittedFiles } from "../core/git";
+import { isGitRepo, uncommittedChanges, uncommittedDiff } from "../core/git";
 import { foldersOf, formatHref, labelRef, parseCodeRef, resolvePath, type CodeRef } from "../core/links";
 import { workspacePath } from "../core/paths";
-import { systemPrompt, tourStepRequest, userRequest, WALK_CHANGES } from "../core/prompts";
+import { reviewRequest, reviewTitle, systemPrompt, tourStepRequest, userRequest, WALK_CHANGES } from "../core/prompts";
 import { interrupted, parseSaved, type SavedThread } from "../core/saved";
 import { TOOLS, type Place, type ToolContext, type ToolUi, type TourPlan } from "../core/tools";
 import type { Approval, ChangedFile, HostMessage, Item, LinkStatus, LocationView, Mode, TourView } from "../protocol";
@@ -82,7 +82,6 @@ export class Session implements vscode.Disposable {
   /** Each model's context window, by server and model, once found. */
   private readonly windows = new Map<string, number>();
   private excluded = new Set<string>();
-  private changedInThread = new Set<string>();
   private lastChanges: ChangedFile[] = [];
   private warnedGit = false;
   private readonly locations = new Map<string, Place[]>();
@@ -155,7 +154,8 @@ export class Session implements vscode.Disposable {
     return this.workspace;
   }
 
-  async send(text: string, mode: Mode): Promise<void> {
+  /** `prompt`, when given, is what the model is asked, in place of `text`, which the panel shows. */
+  async send(text: string, mode: Mode, prompt?: string): Promise<void> {
     const request = text.trim();
     if (request === "") {
       return;
@@ -170,10 +170,15 @@ export class Session implements vscode.Disposable {
       return;
     }
     await this.whileBusy(async () => {
+      // As the request is made, whatever the user looks at while it waits.
+      const files = this.deps.tracker.snapshot();
+      if (mode === "change" && !(await this.confirmUncommitted(ws))) {
+        this.post({ type: "focus", mode, text: request });
+        return;
+      }
       if (this.messages.length === 0) {
         this.messages.push({ role: "system", content: await this.systemPrompt(ws) });
       }
-      const files = this.deps.tracker.snapshot();
       const maxFileLines = settings.maxFileLines();
       const included = contextChips(files, { maxFileLines, excluded: this.excluded })
         .filter((chip) => !chip.excluded)
@@ -183,7 +188,7 @@ export class Session implements vscode.Disposable {
         await this.prepareChange(ws);
       }
       const position = this.tour !== undefined && this.tour.current >= 0 ? { plan: this.tour.plan, index: this.tour.current } : undefined;
-      this.recompose = () => userRequest(mode, request, formatContext(files, { maxFileLines, excluded: this.excluded, sent: this.sent }), position);
+      this.recompose = () => userRequest(mode, prompt ?? request, formatContext(files, { maxFileLines, excluded: this.excluded, sent: this.sent }), position);
       this.messages.push({ role: "user", content: this.recompose() });
       await this.run(ws, mode);
     });
@@ -210,7 +215,6 @@ export class Session implements vscode.Disposable {
     this.recompose = undefined;
     this.gauge = new TokenGauge();
     this.excluded = new Set();
-    this.changedInThread = new Set();
     this.lastChanges = [];
     this.warnedGit = false;
     this.locations.clear();
@@ -230,6 +234,48 @@ export class Session implements vscode.Disposable {
   /** `scope`, with "always", indexes the approval's scopes; the suggested one otherwise. */
   approve(id: string, decision: Approval, scope?: number): void {
     this.approvals.get(id)?.(decision, scope);
+  }
+
+  /**
+   * An Ask request for a light review of the user's uncommitted changes, to
+   * the file in the editor or to all the workspace's files: whether they
+   * call for other changes, or have implications worth knowing.
+   */
+  async reviewChanges(scope: "file" | "all"): Promise<void> {
+    if (this.busy) {
+      void vscode.window.showInformationMessage("Worsley is still working on the last request. Wait for it, or stop it.");
+      return;
+    }
+    const ws = this.currentWorkspace();
+    if (ws === undefined) {
+      this.add<"notice">({ kind: "notice", level: "error", text: "Open a folder first: Worsley works on the files in the workspace's first folder." });
+      return;
+    }
+    let file: string | undefined;
+    if (scope === "file") {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      file = uri?.scheme === "file" ? workspacePath(ws.root, uri.fsPath) : undefined;
+      if (file === undefined) {
+        this.add<"notice">({ kind: "notice", level: "info", text: "Open the file whose changes to review in the editor first." });
+        return;
+      }
+    }
+    const diff = await uncommittedDiff(ws.root, file);
+    if (diff === undefined) {
+      this.add<"notice">({ kind: "notice", level: "info", text: "This folder isn't in a git repository, so there are no uncommitted changes to review." });
+      return;
+    }
+    if (diff.trim() === "") {
+      this.add<"notice">({ kind: "notice", level: "info", text: file !== undefined ? `There are no uncommitted changes to ${file}.` : "There are no uncommitted changes in this workspace." });
+      return;
+    }
+    const unsaved = this.unsavedDocuments(ws)
+      .map((doc) => workspacePath(ws.root, doc.uri.fsPath) ?? doc.uri.fsPath)
+      .filter((path) => file === undefined || path === file);
+    if (unsaved.length > 0) {
+      this.add<"notice">({ kind: "notice", level: "info", text: `Not saved, so not in the review: ${unsaved.join(", ")}.` });
+    }
+    await this.send(reviewTitle(file), "ask", reviewRequest(file, diff));
   }
 
   async walkChanges(): Promise<void> {
@@ -434,32 +480,49 @@ export class Session implements vscode.Disposable {
     });
   }
 
-  /** Saves what the tests should see, and says what git will show. */
+  /** Files in the workspace with edits that aren't saved. */
+  private unsavedDocuments(ws: EditorWorkspace): vscode.TextDocument[] {
+    return vscode.workspace.textDocuments.filter((doc) => doc.isDirty && doc.uri.scheme === "file" && workspacePath(ws.root, doc.uri.fsPath) !== undefined);
+  }
+
+  /**
+   * Whether a Change request goes ahead. When something isn't committed,
+   * git would show it mixed in with this change, so the user decides.
+   */
+  private async confirmUncommitted(ws: EditorWorkspace): Promise<boolean> {
+    const files = await uncommittedChanges(ws.root);
+    const unsaved = this.unsavedDocuments(ws).map((doc) => workspacePath(ws.root, doc.uri.fsPath) ?? doc.uri.fsPath);
+    if (files === undefined || (files.length === 0 && unsaved.length === 0)) {
+      return true;
+    }
+    const item = this.add<"uncommitted">({ kind: "uncommitted", files, unsaved, status: "pending" });
+    this.setStatus("Waiting for you to confirm…");
+    const controller = new AbortController();
+    this.controller = controller;
+    const send = await new Promise<boolean>((resolve) => {
+      const settle = (decision: Approval): void => {
+        this.approvals.delete(item.id);
+        resolve(decision !== "deny");
+      };
+      controller.signal.addEventListener("abort", () => settle("deny"), { once: true });
+      this.approvals.set(item.id, settle);
+    });
+    this.controller = undefined;
+    item.status = send ? "sent" : "cancelled";
+    this.update(item, true);
+    return send;
+  }
+
+  /** Saves what the tests should see, and says when git can't show the change. */
   private async prepareChange(ws: EditorWorkspace): Promise<void> {
-    const dirty = vscode.workspace.textDocuments.filter(
-      (doc) => doc.isDirty && doc.uri.scheme === "file" && workspacePath(ws.root, doc.uri.fsPath) !== undefined,
-    );
+    const dirty = this.unsavedDocuments(ws);
     if (dirty.length > 0) {
       await Promise.all(dirty.map((doc) => doc.save()));
       this.add<"notice">({ kind: "notice", level: "info", text: `Saved ${plural(dirty.length, "file")} with unsaved changes first, so that the tests run on what you see.` });
     }
-    if (this.warnedGit) {
-      return;
-    }
-    const uncommitted = await uncommittedFiles(ws.root);
-    if (uncommitted === undefined) {
+    if (!this.warnedGit && !(await isGitRepo(ws.root))) {
       this.warnedGit = true;
       this.add<"notice">({ kind: "notice", level: "warning", text: "This folder isn't in a git repository, so you can't review or undo Worsley's changes with git." });
-      return;
-    }
-    const others = uncommitted.filter((file) => !this.changedInThread.has(file));
-    if (others.length > 0) {
-      this.warnedGit = true;
-      this.add<"notice">({
-        kind: "notice",
-        level: "info",
-        text: `${plural(others.length, "file")} already had uncommitted changes, so git will show Worsley's changes mixed in with them.`,
-      });
     }
   }
 
@@ -480,7 +543,7 @@ export class Session implements vscode.Disposable {
       }
     }
     const window = (): number | undefined => backend.contextTokens ?? this.windows.get(windowKey);
-    if (endpoint.apiKey === undefined && !settings.isLocal(backend)) {
+    if (endpoint.apiKey === undefined && settings.needsKey(backend)) {
       const where = backend.apiKeyEnv !== undefined ? `, or set ${backend.apiKeyEnv} in the environment VS Code starts from` : "";
       this.add<"notice">({ kind: "notice", level: "error", text: `${backend.name} needs an API key: run “Worsley: Set API Key…”${where}.` });
       return false;
@@ -576,9 +639,6 @@ export class Session implements vscode.Disposable {
       this.update(lastReply, true);
     }
     if (changed.size > 0) {
-      for (const file of changed.keys()) {
-        this.changedInThread.add(file);
-      }
       this.lastChanges = [...changed.values()];
       this.add<"changes">({ kind: "changes", files: this.lastChanges });
     }
@@ -606,14 +666,23 @@ export class Session implements vscode.Disposable {
         return;
       case "error": {
         let hint = "";
-        if (/Couldn't connect/.test(end.message) && settings.isLocal(backend)) {
-          hint = " Is the llama.cpp server running?";
-        } else if (/\b401\b/.test(end.message)) {
+        if (/Couldn't connect/.test(end.message)) {
+          hint = settings.isLocal(backend)
+            ? " Is the llama.cpp server running?"
+            : ` Is ${backend.name} up, and reachable from here? “Worsley: Choose Model…” switches to another backend.`;
+        } else if (/\b40[13]\b/.test(end.message)) {
           hint = " Check the API key with “Worsley: Set API Key…”.";
+          void vscode.window.showErrorMessage(`Worsley: ${backend.name} turned the request away. It may need an API key, or another one.`, "Set API Key…").then((choice) => {
+            if (choice !== undefined) {
+              void settings.askForKey(backend, this.deps.secrets);
+            }
+          });
         } else if (/context|too (?:long|many)|exceed/i.test(end.message)) {
           hint = " The thread may be too long for the model: start a new one.";
         }
-        notice("error", `${end.message}${hint}`);
+        // The server's own message may not end a sentence.
+        const message = /[.!?)]$/.test(end.message.trim()) ? end.message.trim() : `${end.message.trim()}.`;
+        notice("error", `${message}${hint}`);
         return;
       }
     }
@@ -734,7 +803,6 @@ export class Session implements vscode.Disposable {
       tour: tour === undefined ? undefined : { plan: tour.plan, current: tour.current, explained: [...tour.explained] },
       seen: [...this.seen],
       sent: [...this.sent],
-      changedInThread: [...this.changedInThread],
       lastChanges: this.lastChanges,
       warnedGit: this.warnedGit,
       locations: [...this.locations],
@@ -749,7 +817,6 @@ export class Session implements vscode.Disposable {
     this.tour = thread.tour === undefined ? undefined : { plan: thread.tour.plan, current: thread.tour.current, explained: new Map(thread.tour.explained) };
     this.seen = new Set(thread.seen);
     this.sent = new Map(thread.sent);
-    this.changedInThread = new Set(thread.changedInThread);
     this.lastChanges = thread.lastChanges;
     this.warnedGit = thread.warnedGit;
     for (const [id, places] of thread.locations) {

@@ -1,5 +1,5 @@
 // Plays a thread into the panel, standing in for the extension. Choose it
-// with ?scene=ask|change|tour|empty, and ?theme=light for the light theme.
+// with ?scene=ask|change|uncommitted|tour|empty, and ?theme=light for the light theme.
 "use strict";
 
 (() => {
@@ -63,9 +63,22 @@
     },
   ];
 
+  const uncommitted = {
+    kind: "uncommitted",
+    id: "c0",
+    files: [
+      { path: "src/shop/cart.py", untracked: false, lines: { added: 3, removed: 1 } },
+      { path: "src/shop/logo.png", untracked: false },
+      { path: "notes/discounts.md", untracked: true, lines: { added: 12, removed: 0 } },
+    ],
+    unsaved: ["src/shop/pricing.py"],
+    status: "pending",
+  };
+
   const change = [
+    { ...uncommitted, status: "sent" },
     { kind: "user", id: "c1", mode: "change", text: "Let a discount code be a fixed amount off as well as a percentage.", context: ["pricing.py:8-19", "pricing.py"] },
-    { kind: "notice", id: "c2", level: "info", text: "2 files already had uncommitted changes, so git will show Worsley's changes mixed in with them." },
+    { kind: "notice", id: "c2", level: "info", text: "Saved 1 file with unsaved changes first, so that the tests run on what you see." },
     { kind: "assistant", id: "c3", text: "", reasoning: "The DISCOUNTS table maps codes to percentages. I need a second kind of rule, and every caller of apply_discount has to keep working…", streaming: false },
     { kind: "tool", id: "c4", icon: "references", summary: "Found 4 references to apply_discount", status: "done", detail: "src/shop/cart.py:21\nsrc/shop/cli.py:44" },
     { kind: "tool", id: "c5", icon: "edit", summary: "Edited src/shop/pricing.py:8–24", href: "src/shop/pricing.py#L8-L24", diffPath: "src/shop/pricing.py", status: "done" },
@@ -93,22 +106,22 @@
   ];
 
   const tour = {
-    title: "How the shop works",
+    title: "How the shop is built",
     current: 1,
     steps: [
-      { title: "The command line", href: "src/shop/cli.py#L1-L30", itemId: "t2" },
-      { title: "Carts and items", href: "src/shop/cart.py#L1-L27", itemId: "t4" },
-      { title: "Pricing rules", href: "src/shop/pricing.py#L1-L24" },
-      { title: "The tests", href: "tests/test_cart.py#L1-L47" },
+      { title: "Where the parts meet", href: "src/shop/cli.py#L1-L30", itemId: "t2" },
+      { title: "Cart, the shared type", href: "src/shop/cart.py#L1-L27", itemId: "t4" },
+      { title: "Pricing behind one function", href: "src/shop/pricing.py#L1-L24" },
+      { title: "The tests that hold that line", href: "tests/test_cart.py#L1-L47" },
     ],
   };
   const tourItems = [
-    { kind: "user", id: "t0", mode: "ask", text: "Give me a tour of this codebase: what it is for, how it is organized, and how its main parts work together.", context: [] },
-    { kind: "assistant", id: "t1", text: "Four stops, from the command you run to the tests that pin it down.", reasoning: "", streaming: false },
-    { kind: "step", id: "t2", index: 0, total: 4, title: "The command line", href: "src/shop/cli.py#L1-L30" },
-    { kind: "assistant", id: "t3", text: "Everything starts in [`main`](src/shop/cli.py#L12-L30): it parses the arguments with `argparse`, builds a `Cart` from the items given, and prints `cart.total()`.\n\nNothing here knows about prices; that is the cart's job.", reasoning: "", streaming: false },
-    { kind: "step", id: "t4", index: 1, total: 4, title: "Carts and items", href: "src/shop/cart.py#L1-L27" },
-    { kind: "assistant", id: "t5", text: "An [`Item`](src/shop/cart.py#L6-L9) is a name and a price; a [`Cart`](src/shop/cart.py#L12-L27) is a list of them and an optional discount code. `total` is where the steps from `cli.py` end up", reasoning: "", streaming: true },
+    { kind: "user", id: "t0", mode: "ask", text: "Give me a tour of how this codebase is structured: its components, what separates and connects them, and how tightly they are coupled.", context: [] },
+    { kind: "assistant", id: "t1", text: "Four stops: where the parts are put together, the type they share, the one function pricing hides behind, and the tests that hold that line.", reasoning: "", streaming: false },
+    { kind: "step", id: "t2", index: 0, total: 4, title: "Where the parts meet", href: "src/shop/cli.py#L1-L30" },
+    { kind: "assistant", id: "t3", text: "[`main`](src/shop/cli.py#L12-L30) is the only code that knows about every part: it builds a `Cart` and prints its total. Dependencies point one way, `cli` to `cart` to `pricing`, and nothing imports `cli`.\n\nSo the command line could be swapped for another front end without touching the rest.", reasoning: "", streaming: false },
+    { kind: "step", id: "t4", index: 1, total: 4, title: "Cart, the shared type", href: "src/shop/cart.py#L1-L27" },
+    { kind: "assistant", id: "t5", text: "[`Cart`](src/shop/cart.py#L12-L27) is the type the other modules pass around, but pricing never sees it: [`total`](src/shop/cart.py#L18-L27) hands `apply_discount` only an amount and a code, so", reasoning: "", streaming: true },
   ];
 
   function play() {
@@ -121,6 +134,11 @@
     if (scene === "tour") {
       post({ type: "reset", items: tourItems, tour, busy: true, status: "Writing…" });
       post({ type: "context", chips: [{ key: "file:src/shop/cart.py", kind: "file", label: "cart.py", detail: "Active editor", excluded: false }] });
+      return;
+    }
+    if (scene === "uncommitted") {
+      post({ type: "reset", items: [...ask, uncommitted], tour: undefined, busy: true, status: "Waiting for you to confirm…" });
+      post({ type: "context", chips: chips.slice(1) });
       return;
     }
     if (scene === "change") {

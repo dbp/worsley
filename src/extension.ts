@@ -53,14 +53,14 @@ export function activate(context: vscode.ExtensionContext): WorsleyApi {
   const threadFile = context.storageUri?.scheme === "file" ? path.join(context.storageUri.fsPath, "thread.json") : undefined;
   const store = threadFile === undefined ? undefined : threadStore(threadFile);
   const session = new Session({ root, tracker, highlighter, secrets: context.secrets, state: context.workspaceState, store });
-  const panel = new PanelProvider(context.extensionUri, session, { pickBackend: () => pickBackend(context.secrets) });
+  const panel = new PanelProvider(context.extensionUri, session, { pickBackend: () => pickBackend(context.secrets, context.globalState) });
   context.subscriptions.push(
     tracker,
     highlighter,
     session,
     panel,
     vscode.window.registerWebviewViewProvider(PanelProvider.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } }),
-    new WorsleyStatusBar(session),
+    new WorsleyStatusBar(session, context.secrets),
   );
   registerCommands(context, { session, panel, highlighter });
   return { session, panel, threadFile };

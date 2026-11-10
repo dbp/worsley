@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, describe, it } from "node:test";
-import { asOverflow, chatTurn, ContextOverflowError, contextWindowOf, listModels, mergeBodies, toolCallsInText, type ChatMessage, type Endpoint } from "../../src/core/chat";
+import { asOverflow, chatTurn, ContextOverflowError, contextWindowOf, listModels, mergeBodies, refusedKey, bareKey, spendOf, toolCallsInText, type ChatMessage, type Endpoint } from "../../src/core/chat";
 import { startFakeModel } from "../fakeModel";
 
 const messages: ChatMessage[] = [
@@ -131,6 +131,55 @@ describe("a streamed chat turn", () => {
     });
     closers.push(server.close);
     await assert.rejects(chatTurn({ baseUrl: server.url, model: "m" }, messages, [], {}, new AbortController().signal), /Provider returned error \(overloaded\)/);
+  });
+
+  it("says when the server turned the request away for want of a key", async () => {
+    for (const status of [401, 403]) {
+      const model = await startFakeModel(() => ({ status, errorMessage: "Invalid API key" }));
+      closers.push(model.close);
+      await assert.rejects(chatTurn({ baseUrl: model.url, model: "m" }, messages, [], {}, new AbortController().signal), refusedKey);
+    }
+    const server = await rawServer((req, res) => {
+      res.writeHead(req.headers.authorization === "Bearer sesame" ? 200 : 401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "m" }] }));
+    });
+    closers.push(server.close);
+    await assert.rejects(listModels({ baseUrl: server.url, model: "m" }, new AbortController().signal), refusedKey);
+    assert.deepEqual(
+      (await listModels({ baseUrl: server.url, model: "m", apiKey: "sesame" }, new AbortController().signal)).map((m) => m.id),
+      ["m"],
+    );
+    // A key copied with its header's "Bearer " still goes as one bearer.
+    assert.deepEqual(
+      (await listModels({ baseUrl: server.url, model: "m", apiKey: "Bearer sesame" }, new AbortController().signal)).map((m) => m.id),
+      ["m"],
+    );
+    assert.deepEqual(["  sk-unsloth-1 ", "Bearer sk-unsloth-1", "bearer   sk-unsloth-1\n"].map(bareKey), ["sk-unsloth-1", "sk-unsloth-1", "sk-unsloth-1"]);
+    const other = await startFakeModel(() => ({ status: 400, errorMessage: "bad request" }));
+    closers.push(other.close);
+    await assert.rejects(chatTurn({ baseUrl: other.url, model: "m" }, messages, [], {}, new AbortController().signal), (err: unknown) => !refusedKey(err));
+  });
+
+  it("asks what the key has spent, as OpenRouter's /key says", async () => {
+    const server = await rawServer((req, res) => {
+      if (req.url !== "/v1/key" || req.headers.authorization !== "Bearer sesame") {
+        res.writeHead(req.url === "/v1/key" ? 401 : 404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: { label: "test", usage: 40.1, usage_daily: 0.4237, usage_weekly: 1.5, usage_monthly: 3.25 } }));
+    });
+    closers.push(server.close);
+    const signal = new AbortController().signal;
+    assert.deepEqual(await spendOf({ baseUrl: server.url, model: "m", apiKey: "sesame" }, signal), { today: 0.4237, week: 1.5, month: 3.25 });
+    assert.equal(await spendOf({ baseUrl: server.url, model: "m" }, signal), undefined, "without the key");
+    const plain = await rawServer((_req, res) => {
+      res.writeHead(404);
+      res.end();
+    });
+    closers.push(plain.close);
+    assert.equal(await spendOf({ baseUrl: plain.url, model: "m", apiKey: "k" }, signal), undefined, "from a server that doesn't say");
   });
 
   it("waits while llama.cpp is loading the model", async () => {
