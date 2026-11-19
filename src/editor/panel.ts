@@ -45,6 +45,15 @@ export class PanelProvider implements vscode.WebviewViewProvider, vscode.Disposa
     });
   }
 
+  /** Shows the panel, leaving the focus where it is when the panel is open already. */
+  async reveal(): Promise<void> {
+    if (this.view !== undefined) {
+      this.view.show(true);
+      return;
+    }
+    await vscode.commands.executeCommand(`${PanelProvider.viewId}.focus`);
+  }
+
   /** Shows the panel and puts the cursor in its message box, in `mode`. */
   async focus(mode?: Mode, text?: string): Promise<void> {
     this.focusRequest = { type: "focus", mode, text };
@@ -118,6 +127,9 @@ export class PanelProvider implements vscode.WebviewViewProvider, vscode.Disposa
         return;
       case "startTour":
         void vscode.commands.executeCommand("worsley.tour");
+        return;
+      case "standalone":
+        void (message.request === "explain" ? session.explainLine() : session.translate());
         return;
       case "pickBackend":
         void this.commands.pickBackend();

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { runTests } from "@vscode/test-electron";
 import { TOUR_REQUEST } from "../../src/core/prompts";
+import { EXPLAIN_SYSTEM, explainRequest, TRANSLATE_SYSTEM } from "../../src/core/standalone";
 import { lastOf, startFakeModel, type ChatRequest, type FakeReply } from "../fakeModel";
 
 /**
@@ -45,7 +46,52 @@ export const FILES: Record<string, string> = {
     "});",
     "",
   ].join("\n"),
+  // Pseudocode in a function, for Translate at level 1.
+  "src/shipping.js": [
+    '"use strict";',
+    "",
+    "function shipping(order) {",
+    "  set cost to 5",
+    "  if order's weight is more than 10",
+    "    add 2 to cost",
+    "  make it cheaper for members",
+    "  return cost",
+    "}",
+    "",
+    "module.exports = { shipping };",
+    "",
+  ].join("\n"),
 };
+
+/** What the fake model is sent to translate from src/shipping.js, without the indentation its lines share. */
+const SHIPPING_STEPS = "set cost to 5\nif order's weight is more than 10\n  add 2 to cost\nmake it cheaper for members\nreturn cost";
+
+/**
+ * A request that stands alone, which must come with its own system prompt
+ * and one message, and no tools: the model sees nothing but the code.
+ */
+async function respondStandalone(request: ChatRequest, system: string, user: string): Promise<FakeReply> {
+  if (request.messages.length !== 2 || request.tools !== undefined) {
+    return { content: `Not alone: ${request.messages.length} messages and ${request.tools?.length ?? 0} tools.` };
+  }
+  if (system === EXPLAIN_SYSTEM) {
+    const expected = explainRequest("module.exports = { shipping };", "JavaScript");
+    return { content: user === expected ? "`module.exports` is what another file gets when it `require`s this one." : `Explained the wrong thing: ${user}` };
+  }
+  if (!user.includes(`<pseudocode>\n${SHIPPING_STEPS}\n</pseudocode>`) || !user.includes("to translate into JavaScript")) {
+    return { content: `Translated the wrong thing: ${user}` };
+  }
+  if (!user.includes("indenting with 2 spaces")) {
+    return { content: `Indenting with the wrong unit: ${user}` };
+  }
+  // Long enough for the test to change the file while it waits.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  return {
+    content:
+      "```javascript\nlet cost = 5;\nif (order.weight > 10) {\n  cost += 2;\n}\nmake it cheaper for members\nreturn cost;\n```\n" +
+      '- "make it cheaper for members": this says what to achieve. Say how much cheaper, and for whom.',
+  };
+}
 
 /** The turns of the current request so far: how many replies the model has given since the user spoke. */
 function round(request: ChatRequest): number {
@@ -58,8 +104,12 @@ function round(request: ChatRequest): number {
   return n;
 }
 
-function respond(request: ChatRequest): FakeReply {
+async function respond(request: ChatRequest): Promise<FakeReply> {
   const user = lastOf(request, "user");
+  const system = request.messages[0]?.content ?? "";
+  if (system === EXPLAIN_SYSTEM || system === TRANSLATE_SYSTEM) {
+    return respondStandalone(request, system, user);
+  }
   const n = round(request);
   if (user.includes("What does this do?")) {
     if (!user.includes('<selection path="src/cart.js" lines="3-5">') || !user.includes('<request mode="ask">')) {

@@ -10,6 +10,19 @@
  */
 export type Mode = "ask" | "change";
 
+/**
+ * Requests that stand alone, outside the thread: the model sees only the
+ * code they are about. `explain` explains one line; `translate` turns the
+ * student's pseudocode into code.
+ */
+export type Standalone = "explain" | "translate";
+
+/** What a user's message in the thread asked for. */
+export type Request = Mode | Standalone;
+
+/** Something Worsley does, which its level offers or doesn't (see core/levels.ts). */
+export type Feature = Request | "tour" | "review";
+
 /** Something in the editor that the next message will include. */
 export interface ContextChip {
   key: string;
@@ -48,7 +61,8 @@ export interface FileChange {
 
 /** One entry in the thread, as the panel draws it. Items are replaced whole by id. */
 export type Item =
-  | { kind: "user"; id: string; mode: Mode; text: string; context: string[] }
+  /** For a request that stands alone, `text` is the code it is about, and `context` where that is. */
+  | { kind: "user"; id: string; mode: Request; text: string; context: string[] }
   | { kind: "step"; id: string; index: number; total: number; title: string; href: string }
   | {
       kind: "assistant";
@@ -113,7 +127,9 @@ export type HostMessage =
   | { type: "backend"; label: string; tooltip: string }
   /** Which of the links in an assistant item lead somewhere. */
   | { type: "links"; id: string; statuses: Record<string, LinkStatus> }
-  | { type: "focus"; mode?: Mode; text?: string };
+  | { type: "focus"; mode?: Mode; text?: string }
+  /** What Worsley offers at its level, which the panel shows and nothing else. */
+  | { type: "level"; level: number; features: Feature[] };
 
 export type PanelMessage =
   | { type: "ready" }
@@ -133,4 +149,6 @@ export type PanelMessage =
   | { type: "checkLinks"; id: string; hrefs: string[] }
   | { type: "startTour" }
   | { type: "copy"; text: string }
-  | { type: "pickBackend" };
+  | { type: "pickBackend" }
+  /** A request that stands alone, about what the editor has selected. */
+  | { type: "standalone"; request: Standalone };

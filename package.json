@@ -32,7 +32,9 @@
     "tour"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "commands": [
       {
@@ -46,6 +48,18 @@
         "title": "Change This Code…",
         "category": "Worsley",
         "icon": "$(edit)"
+      },
+      {
+        "command": "worsley.explainLine",
+        "title": "Explain This Line",
+        "category": "Worsley",
+        "icon": "$(question)"
+      },
+      {
+        "command": "worsley.translate",
+        "title": "Translate Into Code",
+        "category": "Worsley",
+        "icon": "$(arrow-swap)"
       },
       {
         "command": "worsley.tour",
@@ -107,40 +121,58 @@
         "command": "worsley.ask",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a",
-        "when": "editorTextFocus"
+        "when": "editorTextFocus && worsley.feature.ask"
       },
       {
         "command": "worsley.change",
         "key": "ctrl+alt+e",
         "mac": "cmd+alt+e",
-        "when": "editorTextFocus"
+        "when": "editorTextFocus && worsley.feature.change"
+      },
+      {
+        "command": "worsley.explainLine",
+        "key": "ctrl+alt+x",
+        "mac": "cmd+alt+x",
+        "when": "editorTextFocus && worsley.feature.explain"
       }
     ],
     "menus": {
       "editor/context": [
         {
           "command": "worsley.ask",
+          "when": "worsley.feature.ask",
           "group": "worsley@1"
         },
         {
           "command": "worsley.change",
+          "when": "worsley.feature.change",
           "group": "worsley@2"
+        },
+        {
+          "command": "worsley.explainLine",
+          "when": "worsley.feature.explain",
+          "group": "worsley@3"
+        },
+        {
+          "command": "worsley.translate",
+          "when": "worsley.feature.translate",
+          "group": "worsley@4"
         }
       ],
       "view/title": [
         {
           "command": "worsley.reviewFile",
-          "when": "view == worsley.panel",
+          "when": "view == worsley.panel && worsley.feature.review",
           "group": "navigation@1"
         },
         {
           "command": "worsley.reviewAll",
-          "when": "view == worsley.panel",
+          "when": "view == worsley.panel && worsley.feature.review",
           "group": "navigation@2"
         },
         {
           "command": "worsley.tour",
-          "when": "view == worsley.panel",
+          "when": "view == worsley.panel && worsley.feature.tour",
           "group": "navigation@3"
         },
         {
@@ -160,11 +192,43 @@
         },
         {
           "command": "worsley.allowedCommands",
-          "when": "view == worsley.panel",
+          "when": "view == worsley.panel && worsley.feature.change",
           "group": "settings@3"
         }
       ],
       "commandPalette": [
+        {
+          "command": "worsley.ask",
+          "when": "worsley.feature.ask"
+        },
+        {
+          "command": "worsley.change",
+          "when": "worsley.feature.change"
+        },
+        {
+          "command": "worsley.explainLine",
+          "when": "worsley.feature.explain"
+        },
+        {
+          "command": "worsley.translate",
+          "when": "worsley.feature.translate"
+        },
+        {
+          "command": "worsley.tour",
+          "when": "worsley.feature.tour"
+        },
+        {
+          "command": "worsley.reviewFile",
+          "when": "worsley.feature.review"
+        },
+        {
+          "command": "worsley.reviewAll",
+          "when": "worsley.feature.review"
+        },
+        {
+          "command": "worsley.allowedCommands",
+          "when": "worsley.feature.change"
+        },
         {
           "command": "worsley.stop",
           "when": "worsley.busy"
@@ -299,6 +363,23 @@
           "default": "local",
           "markdownDescription": "The `name` of the entry in `#worsley.backends#` to use. **Worsley: Choose Model…** changes it."
         },
+        "worsley.level": {
+          "type": "number",
+          "enum": [
+            1,
+            2
+          ],
+          "enumItemLabels": [
+            "1: Syntax",
+            "2: Everything"
+          ],
+          "markdownEnumDescriptions": [
+            "**Explain This Line**, which explains one line of code on its own, and **Translate Into Code**, which turns pseudocode into code without adding to it. The model sees only that line, or those lines.",
+            "Everything: asking about the code, changing it, tours and reviews, besides what level 1 offers."
+          ],
+          "default": 2,
+          "markdownDescription": "How much of Worsley there is, for a course that brings it in a little at a time. Each level offers what the one below it does, and more. A course can set it for a workspace, in the `.vscode/settings.json` of the project its students start from."
+        },
         "worsley.testCommand": {
           "type": "string",
           "default": "",
@@ -334,7 +415,8 @@
     "vsce:package": "vsce package --no-dependencies --allow-missing-repository",
     "test": "node esbuild.config.mjs --tests && node --test \"out/test/unit/*.test.js\"",
     "test:integration": "node esbuild.config.mjs && node esbuild.config.mjs --tests && node out/test/integration/run.js",
-    "live": "node esbuild.config.mjs --tests && node out/test/live/run.js"
+    "live": "node esbuild.config.mjs --tests && node out/test/live/run.js",
+    "live:translate": "node esbuild.config.mjs --tests && node out/test/live/translations.js"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

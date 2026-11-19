@@ -1,5 +1,5 @@
 import { EXACTLY } from "../core/commandLine";
-import type { Approval, ContextChip, HostMessage, Item, LinkStatus, Mode, PanelMessage, ToolIcon, TourView } from "../protocol";
+import type { Approval, ContextChip, Feature, HostMessage, Item, LinkStatus, Mode, PanelMessage, Request, Standalone, ToolIcon, TourView } from "../protocol";
 import { applyStatuses, collectRefs, renderMarkdown } from "./markdown";
 
 /**
@@ -43,15 +43,22 @@ const app = document.getElementById("app") as HTMLElement;
 // the message box, and the selection is lost.
 const tourBar = h("div", { id: "tour", hidden: true, tabindex: "-1" });
 const thread = h("main", { id: "thread", tabindex: "-1" });
-const empty = h(
-  "div",
-  { id: "empty" },
-  h("p", { className: "empty-title" }, "Read the code, with help."),
-  h("p", {}, "Select some code and press ", h("kbd", {}, keys("A")), " to ask about it, or ", h("kbd", {}, keys("E")), " to change it. Worsley sees the files you have open and what you select."),
-  h("p", {}, "Ask where something happens and it lists every place; ask how something works and it walks you through the code a step at a time. A tour of the codebase shows how it is built: its parts, and what separates and connects them."),
-  h("button", { className: "secondary", "data-action": "start-tour" }, "Tour this codebase"),
-);
+const empty = h("div", { id: "empty" });
 thread.append(empty);
+// The requests that stand alone, about what the editor has selected.
+const standaloneButtons = (["explain", "translate"] as const).map((request) =>
+  h(
+    "button",
+    {
+      className: "secondary",
+      "data-action": "standalone",
+      "data-request": request,
+      title: request === "explain" ? `Explain the line the cursor is on, on its own (${keys("X")})` : "Translate the selected pseudocode into code, in the file's language",
+    },
+    request === "explain" ? "Explain line" : "Translate",
+  ),
+);
+const standaloneRow = h("div", { id: "standalone" }, ...standaloneButtons);
 const chipsRow = h("div", { id: "chips" });
 const input = h("textarea", { id: "input", rows: "3", "aria-label": "Message" });
 const modeButtons = (["ask", "change"] as const).map((m) =>
@@ -64,23 +71,20 @@ const modeButtons = (["ask", "change"] as const).map((m) =>
     m === "ask" ? "Ask" : "Change",
   ),
 );
+const modesGroup = h("div", { className: "modes", role: "group", "aria-label": "Mode" }, ...modeButtons);
 const statusText = h("span", { id: "status" });
 const sendButton = h("button", { id: "send", className: "primary" }, "Send");
 const backendButton = h("button", { id: "backend", className: "link-button", title: "Choose another model" });
-const composer = h(
-  "footer",
-  { id: "composer" },
-  chipsRow,
-  input,
-  h("div", { id: "controls" }, h("div", { className: "modes", role: "group", "aria-label": "Mode" }, ...modeButtons), statusText, sendButton),
-  backendButton,
-);
+const composer = h("footer", { id: "composer" }, standaloneRow, chipsRow, input, h("div", { id: "controls" }, modesGroup, statusText, sendButton), backendButton);
 app.append(tourBar, thread, composer);
 
 // ---- State
 
 let busy = false;
 let mode: Mode = "ask";
+/** What Worsley's level offers: everything, until the extension says. */
+let features = new Set<Feature>(["explain", "translate", "ask", "change", "tour", "review"]);
+let chipCount = 0;
 let tour: TourView | undefined;
 const items = new Map<string, Item>();
 const nodes = new Map<string, HTMLElement>();
@@ -129,16 +133,21 @@ function copyButton(text: string): HTMLButtonElement {
   return h("button", { className: "link-button copy", "data-action": "copy", "data-copy": text, title: "Copy this to the clipboard" }, "Copy");
 }
 
+const REQUEST_LABELS: Record<Request, string> = { ask: "Ask", change: "Change", explain: "Explain", translate: "Translate" };
+
 function draw(item: Item): HTMLElement {
   switch (item.kind) {
-    case "user":
+    case "user": {
+      // A request that stands alone shows the code it is about.
+      const code = item.mode === "explain" || item.mode === "translate";
       return h(
         "div",
         { className: `item user ${item.mode}` },
-        h("div", { className: "who" }, item.mode === "change" ? "Change" : "Ask"),
-        h("div", { className: "user-text" }, item.text),
+        h("div", { className: "who" }, REQUEST_LABELS[item.mode] ?? item.mode),
+        code ? h("pre", { className: "user-code" }, item.text) : h("div", { className: "user-text" }, item.text),
         item.context.length > 0 && h("div", { className: "user-context" }, ...item.context.map((label) => h("span", { className: "chip static" }, label))),
       );
+    }
     case "step":
       return h(
         "div",
@@ -435,6 +444,93 @@ function showTourStep(): void {
 
 // ---- The composer
 
+// ---- What the level offers
+
+/** The Ask and Change modes that the level offers. */
+function offeredModes(): Mode[] {
+  return (["ask", "change"] as const).filter((m) => features.has(m));
+}
+
+/** What the empty thread says: how to use what the level offers. */
+function drawEmpty(): void {
+  const paragraphs: Child[] = [];
+  const modes = offeredModes();
+  const standalone = features.has("explain") || features.has("translate");
+  if (modes.length > 0) {
+    paragraphs.push(h("p", { className: "empty-title" }, "Read the code, with help."));
+    const how: Child[] = ["Select some code and press "];
+    if (features.has("ask")) {
+      how.push(h("kbd", {}, keys("A")), " to ask about it");
+    }
+    if (features.has("change")) {
+      how.push(features.has("ask") ? ", or " : "", h("kbd", {}, keys("E")), " to change it");
+    }
+    how.push(". Worsley sees the files you have open and what you select.");
+    paragraphs.push(h("p", {}, ...how));
+    if (features.has("ask")) {
+      paragraphs.push(
+        h(
+          "p",
+          {},
+          "Ask where something happens and it lists every place; ask how something works and it walks you through the code a step at a time.",
+          features.has("tour") ? " A tour of the codebase shows how it is built: its parts, and what separates and connects them." : "",
+        ),
+      );
+    }
+  } else if (standalone) {
+    paragraphs.push(h("p", { className: "empty-title" }, "Learn how code is written."));
+  }
+  if (features.has("explain")) {
+    paragraphs.push(
+      h(
+        "p",
+        {},
+        "Put the cursor on a line of code and press ",
+        h("kbd", {}, keys("X")),
+        ", or ",
+        h("em", {}, "Explain line"),
+        ", and Worsley explains that line on its own: what each part of it means.",
+      ),
+    );
+  }
+  if (features.has("translate")) {
+    paragraphs.push(
+      h(
+        "p",
+        {},
+        "Write the steps of a program in your own words, select them and press ",
+        h("em", {}, "Translate"),
+        ": Worsley writes them in the file's language, adding nothing of its own. A line that asks for code, rather than saying what to do, stays as you wrote it.",
+      ),
+    );
+  }
+  if (features.has("tour")) {
+    paragraphs.push(h("button", { className: "secondary", "data-action": "start-tour" }, "Tour this codebase"));
+  }
+  empty.replaceChildren(...paragraphs.filter((p): p is Node => p !== undefined && p !== false && typeof p !== "string"));
+}
+
+/** Shows what the level offers, and only that. */
+function applyFeatures(): void {
+  const modes = offeredModes();
+  for (const button of modeButtons) {
+    button.hidden = !features.has(button.dataset.mode as Mode);
+  }
+  modesGroup.hidden = modes.length < 2;
+  input.hidden = modes.length === 0;
+  chipsRow.hidden = chipCount === 0 || modes.length === 0;
+  for (const button of standaloneButtons) {
+    button.hidden = !features.has(button.dataset.request as Standalone);
+  }
+  standaloneRow.hidden = standaloneButtons.every((button) => button.hidden);
+  const first = modes[0];
+  if (!modes.includes(mode) && first !== undefined) {
+    setMode(first);
+  }
+  drawEmpty();
+  setBusy(busy, statusText.textContent ?? "");
+}
+
 function drawChips(chips: ContextChip[]): void {
   chipsRow.replaceChildren(
     ...chips.map((chip) =>
@@ -451,7 +547,8 @@ function drawChips(chips: ContextChip[]): void {
       ),
     ),
   );
-  chipsRow.hidden = chips.length === 0;
+  chipCount = chips.length;
+  chipsRow.hidden = chips.length === 0 || offeredModes().length === 0;
 }
 
 function setMode(next: Mode): void {
@@ -469,6 +566,11 @@ function setBusy(next: boolean, status: string): void {
   statusText.classList.toggle("active", busy);
   sendButton.textContent = busy ? "Stop" : "Send";
   sendButton.className = busy ? "secondary" : "primary";
+  // Without a message box, the button is there only to stop a request.
+  sendButton.hidden = !busy && offeredModes().length === 0;
+  for (const button of standaloneButtons) {
+    button.disabled = busy;
+  }
   drawTour();
 }
 
@@ -538,6 +640,9 @@ document.addEventListener("click", (event) => {
         return;
       case "start-tour":
         send({ type: "startTour" });
+        return;
+      case "standalone":
+        send({ type: "standalone", request: data.request as Standalone });
         return;
       case "copy":
         send({ type: "copy", text: data.copy ?? "" });
@@ -629,18 +734,25 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
       return;
     }
     case "focus":
-      if (message.mode !== undefined) {
+      if (message.mode !== undefined && features.has(message.mode)) {
         setMode(message.mode);
       }
       if (message.text !== undefined) {
         input.value = message.text;
         grow();
       }
-      input.focus();
+      if (!input.hidden) {
+        input.focus();
+      }
+      return;
+    case "level":
+      features = new Set(message.features);
+      applyFeatures();
       return;
   }
 });
 
 setMode("ask");
 drawChips([]);
+applyFeatures();
 send({ type: "ready" });

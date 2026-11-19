@@ -1,19 +1,33 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { runAgent, type AgentEnd, type AgentHooks } from "../core/agent";
-import { chatTurn, contextWindowOf, type ChatMessage, type ToolCall, type Usage } from "../core/chat";
+import { chatTurn, contextWindowOf, type ChatMessage, type Endpoint, type ToolCall, type Turn, type Usage } from "../core/chat";
 import { allowedBy, scopesFor, withRules, type CommandRules } from "../core/commandLine";
 import { TokenGauge, withRoom, type Compaction } from "../core/compact";
-import { contextChips, formatContext } from "../core/context";
+import { contextChips, formatContext, rangeText } from "../core/context";
 import { errorText } from "../core/errorText";
 import { numberLines, splitLines, summarizeFiles } from "../core/files";
 import { isGitRepo, uncommittedChanges, uncommittedDiff } from "../core/git";
+import { featuresAt, notAtLevel, TOP_LEVEL } from "../core/levels";
 import { foldersOf, formatHref, labelRef, parseCodeRef, resolvePath, type CodeRef } from "../core/links";
 import { workspacePath } from "../core/paths";
 import { reviewRequest, reviewTitle, systemPrompt, tourStepRequest, userRequest, WALK_CHANGES } from "../core/prompts";
 import { interrupted, parseSaved, type SavedThread } from "../core/saved";
+import {
+  codeIn,
+  dedent,
+  EXPLAIN_SYSTEM,
+  explainRequest,
+  indentUnit,
+  languageName,
+  reindent,
+  selectedLines,
+  TRANSLATE_SYSTEM,
+  translateRequest,
+  type LineSpan,
+} from "../core/standalone";
 import { TOOLS, type Place, type ToolContext, type ToolUi, type TourPlan } from "../core/tools";
-import type { Approval, ChangedFile, HostMessage, Item, LinkStatus, LocationView, Mode, TourView } from "../protocol";
+import type { Approval, ChangedFile, Feature, HostMessage, Item, LinkStatus, LocationView, Mode, Standalone, TourView } from "../protocol";
 import type { EditorTracker } from "./editorTracker";
 import type { Highlighter } from "./highlight";
 import * as settings from "./settings";
@@ -107,8 +121,13 @@ export class Session implements vscode.Disposable {
           this.postBackend();
           this.postContext();
         }
+        if (e.affectsConfiguration("worsley.level")) {
+          this.postLevel();
+          this.postTour();
+        }
       }),
     ];
+    this.postLevel();
     const saved = deps.store?.load();
     const thread = saved === undefined ? undefined : parseSaved(saved);
     if (thread !== undefined) {
@@ -141,6 +160,16 @@ export class Session implements vscode.Disposable {
     this.post({ type: "reset", items: this.items, tour: this.tourView(), busy: this.busy, status: this.status });
     this.postContext();
     this.postBackend();
+    this.postLevel();
+  }
+
+  /** Whether Worsley's level offers `feature`. If not, a notice in the thread says so. */
+  offers(feature: Feature): boolean {
+    if (settings.features().has(feature)) {
+      return true;
+    }
+    this.add<"notice">({ kind: "notice", level: "info", text: notAtLevel(feature, settings.level()) });
+    return false;
   }
 
   private currentWorkspace(): EditorWorkspace | undefined {
@@ -154,10 +183,14 @@ export class Session implements vscode.Disposable {
     return this.workspace;
   }
 
-  /** `prompt`, when given, is what the model is asked, in place of `text`, which the panel shows. */
-  async send(text: string, mode: Mode, prompt?: string): Promise<void> {
+  /**
+   * `prompt`, when given, is what the model is asked, in place of `text`,
+   * which the panel shows. `feature` is what the level must offer: the mode,
+   * unless the request is for a tour or a review.
+   */
+  async send(text: string, mode: Mode, prompt?: string, feature: Feature = mode): Promise<void> {
     const request = text.trim();
-    if (request === "") {
+    if (request === "" || !this.offers(feature)) {
       return;
     }
     if (this.busy) {
@@ -242,6 +275,9 @@ export class Session implements vscode.Disposable {
    * call for other changes, or have implications worth knowing.
    */
   async reviewChanges(scope: "file" | "all"): Promise<void> {
+    if (!this.offers("review")) {
+      return;
+    }
     if (this.busy) {
       void vscode.window.showInformationMessage("Worsley is still working on the last request. Wait for it, or stop it.");
       return;
@@ -275,12 +311,12 @@ export class Session implements vscode.Disposable {
     if (unsaved.length > 0) {
       this.add<"notice">({ kind: "notice", level: "info", text: `Not saved, so not in the review: ${unsaved.join(", ")}.` });
     }
-    await this.send(reviewTitle(file), "ask", reviewRequest(file, diff));
+    await this.send(reviewTitle(file), "ask", reviewRequest(file, diff), "review");
   }
 
   async walkChanges(): Promise<void> {
     if (this.lastChanges.length > 0) {
-      await this.send(WALK_CHANGES, "ask");
+      await this.send(WALK_CHANGES, "ask", undefined, "tour");
     }
   }
 
@@ -397,7 +433,7 @@ export class Session implements vscode.Disposable {
       return;
     }
     const explained = tour.explained.has(index);
-    if (!explained && this.busy) {
+    if (!explained && (this.busy || !this.offers("tour"))) {
       return;
     }
     tour.current = index;
@@ -440,9 +476,10 @@ export class Session implements vscode.Disposable {
     this.scheduleSave();
   }
 
+  /** The tour as the panel shows it; none at a level without tours, though it is kept for one with them. */
   private tourView(): TourView | undefined {
     const tour = this.tour;
-    if (tour === undefined) {
+    if (tour === undefined || !settings.features().has("tour")) {
       return undefined;
     }
     return {
@@ -450,6 +487,215 @@ export class Session implements vscode.Disposable {
       current: tour.current,
       steps: tour.plan.steps.map((step, i) => ({ title: step.title, href: formatHref(step), itemId: tour.explained.get(i) })),
     };
+  }
+
+  // ---- Requests that stand alone
+
+  /**
+   * Explains the line the cursor is on, or that the selection is part of,
+   * on its own: the model sees that line and its language, and nothing else.
+   */
+  async explainLine(): Promise<void> {
+    const editor = this.standaloneEditor("explain");
+    if (editor === undefined) {
+      return;
+    }
+    const doc = editor.document;
+    const span = selectedLines(editor.selection.start, editor.selection.end);
+    if (span.last !== span.first) {
+      this.add<"notice">({ kind: "notice", level: "info", text: "Explain Line explains one line at a time. Put the cursor on the line to explain, or select part of it." });
+      return;
+    }
+    const line = doc.lineAt(span.first).text.trim();
+    if (line === "") {
+      this.add<"notice">({ kind: "notice", level: "info", text: "That line is empty. Put the cursor on a line of code to explain it." });
+      return;
+    }
+    const selected = editor.selection.isEmpty ? "" : doc.getText(editor.selection).trim();
+    const part = selected !== "" && selected !== line ? selected : undefined;
+    await this.whileBusy(async () => {
+      await this.standalone("explain", {
+        text: line,
+        where: `${fileName(doc)}:${span.first + 1}`,
+        system: EXPLAIN_SYSTEM,
+        prompt: explainRequest(line, languageName(doc.languageId), part),
+      });
+    });
+  }
+
+  /**
+   * Translates the selected lines, or the cursor's line, from the student's
+   * pseudocode into the language of the file, and puts the translation in
+   * their place. The model sees those lines and nothing else, so it has
+   * nothing to add to them from.
+   */
+  async translate(): Promise<void> {
+    const editor = this.standaloneEditor("translate");
+    if (editor === undefined) {
+      return;
+    }
+    const doc = editor.document;
+    const language = languageName(doc.languageId);
+    if (language === undefined) {
+      this.add<"notice">({
+        kind: "notice",
+        level: "info",
+        text: `Translate writes code in the language of the file the lines are in, and ${fileName(doc)} isn't in a programming language. Write them in a file of the language to translate into, such as a .py file.`,
+      });
+      return;
+    }
+    const span = selectedLines(editor.selection.start, editor.selection.end);
+    const lines: string[] = [];
+    for (let n = span.first; n <= span.last; n++) {
+      lines.push(doc.lineAt(n).text);
+    }
+    if (lines.every((line) => line.trim() === "")) {
+      this.add<"notice">({ kind: "notice", level: "info", text: "There is nothing there to translate. Select the lines to translate." });
+      return;
+    }
+    // Sent without the indentation they share, which the translation gets back.
+    const { lines: bare, indent } = dedent(lines);
+    const block = bare.join("\n");
+    const unit = indentUnit(editor.options.insertSpaces !== false, typeof editor.options.tabSize === "number" ? editor.options.tabSize : 4);
+    const version = doc.version;
+    await this.whileBusy(async () => {
+      const reply = await this.standalone("translate", {
+        text: block,
+        where: `${fileName(doc)}:${rangeText({ start: span.first + 1, end: span.last + 1 })}`,
+        system: TRANSLATE_SYSTEM,
+        prompt: translateRequest(block, language, unit),
+      });
+      if (reply !== undefined) {
+        await this.putTranslation(doc, { span, version, lines, indent }, reply);
+      }
+    });
+  }
+
+  /**
+   * The editor a request that stands alone is about. Undefined, with a
+   * notice saying why, when the request can't be made now.
+   */
+  private standaloneEditor(request: Standalone): vscode.TextEditor | undefined {
+    if (!this.offers(request)) {
+      return undefined;
+    }
+    if (this.busy) {
+      void vscode.window.showInformationMessage("Worsley is still working on the last request. Wait for it, or stop it.");
+      return undefined;
+    }
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined || (editor.document.uri.scheme !== "file" && editor.document.uri.scheme !== "untitled")) {
+      const what = request === "explain" ? "put the cursor on the line to explain" : "select the lines to translate";
+      this.add<"notice">({ kind: "notice", level: "info", text: `In the editor, ${what} first.` });
+      return undefined;
+    }
+    return editor;
+  }
+
+  /**
+   * Asks a request that stands alone: its own system prompt and one message,
+   * for one reply. The thread the model sees for Ask and Change is left as it
+   * is, so nothing in it reaches the model, and nothing from here joins it.
+   * The reply, once it is complete; undefined when there is none.
+   */
+  private async standalone(request: Standalone, ask: { text: string; where: string; system: string; prompt: string }): Promise<string | undefined> {
+    this.add<"user">({ kind: "user", mode: request, text: ask.text, context: [ask.where] });
+    const connection = await this.connect("ask");
+    if (connection === undefined) {
+      return undefined;
+    }
+    const { backend, endpoint, window } = connection;
+    const controller = new AbortController();
+    this.controller = controller;
+    const started = Date.now();
+    let reply: ItemOf<"assistant"> | undefined;
+    const item = (): ItemOf<"assistant"> => (reply ??= this.add<"assistant">({ kind: "assistant", text: "", reasoning: "", streaming: true }));
+    this.setStatus(`Waiting for ${backend.model}…`);
+    let turn: Turn | undefined;
+    let end: AgentEnd;
+    try {
+      turn = await chatTurn(
+        endpoint,
+        [
+          { role: "system", content: ask.system },
+          { role: "user", content: ask.prompt },
+        ],
+        [],
+        {
+          content: (delta) => {
+            const r = item();
+            r.text += delta;
+            this.update(r);
+            this.setStatus("Writing…");
+          },
+          reasoning: (delta) => {
+            const r = item();
+            r.reasoning += delta;
+            this.update(r);
+            this.setStatus("Thinking…");
+          },
+          status: (text) => this.setStatus(text),
+        },
+        controller.signal,
+      );
+      end = { reason: "done", finish: turn.finishReason };
+    } catch (err) {
+      end = controller.signal.aborted ? { reason: "aborted" } : { reason: "error", message: errorText(err) };
+    } finally {
+      this.controller = undefined;
+    }
+    const written = reply as ItemOf<"assistant"> | undefined;
+    if (written !== undefined) {
+      written.streaming = false;
+      if (turn !== undefined) {
+        const totals: Totals = { rounds: 1, generated: 0, cost: 0 };
+        addUsage(totals, turn.usage);
+        written.stats = formatStats(totals, Date.now() - started, window());
+      }
+      this.update(written, true);
+    }
+    this.report(end, backend, turn !== undefined && turn.content.trim() !== "");
+    return end.reason === "done" ? turn?.content : undefined;
+  }
+
+  /**
+   * Puts the code in a translation's reply in place of the lines it was
+   * made from, if they are still as they were. Undo in the editor brings
+   * them back. A line the model couldn't translate is in the code as the
+   * student wrote it, so it stays.
+   */
+  private async putTranslation(
+    doc: vscode.TextDocument,
+    from: { span: LineSpan; version: number; lines: string[]; indent: string },
+    reply: string,
+  ): Promise<void> {
+    const notice = (level: "info" | "warning", text: string): void => {
+      this.add<"notice">({ kind: "notice", level, text });
+    };
+    const code = codeIn(reply);
+    const translated = code === undefined ? [] : reindent(code, from.indent);
+    if (translated.every((line) => line === "")) {
+      notice("info", "The reply has no code to put in the editor, so your lines are as you wrote them.");
+      return;
+    }
+    if (translated.join("\n") === from.lines.map((line) => line.replace(/[ \t]+$/, "")).join("\n")) {
+      notice("info", "The translation is what you wrote already, so the editor is unchanged.");
+      return;
+    }
+    if (doc.isClosed || doc.version !== from.version) {
+      notice("warning", `${fileName(doc)} changed while Worsley was translating, so the translation isn't in it. Copy it from here instead.`);
+      return;
+    }
+    const { first, last } = from.span;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(first, 0, last, doc.lineAt(last).text.length), translated.join(doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n"));
+    if (!(await vscode.workspace.applyEdit(edit))) {
+      notice("warning", `Couldn't put the translation in ${fileName(doc)}. Copy it from here instead.`);
+      return;
+    }
+    const lines = { start: first + 1, end: first + translated.length };
+    this.deps.highlighter.set([{ uri: doc.uri, ...lines }]);
+    notice("info", `Put the translation in ${fileName(doc)}, at ${lines.start === lines.end ? `line ${lines.start}` : `lines ${rangeText(lines)}`}, in place of your lines. Undo in the editor brings them back.`);
   }
 
   // ---- Running a request
@@ -526,12 +772,16 @@ export class Session implements vscode.Disposable {
     }
   }
 
-  /** Runs the model on the thread until it answers. Whether it said anything. */
-  private async run(ws: EditorWorkspace, mode: Mode): Promise<boolean> {
+  /**
+   * The backend in use, ready for a request in `mode`, with its model's
+   * context window once known. Undefined, with a notice saying why, when it
+   * can't be used.
+   */
+  private async connect(mode: Mode): Promise<Connection | undefined> {
     const backend = settings.activeBackend();
     if (backend === undefined) {
       this.add<"notice">({ kind: "notice", level: "error", text: "No backend is set up: add one to worsley.backends in your settings." });
-      return false;
+      return undefined;
     }
     const endpoint = await settings.endpointFor(backend, this.deps.secrets, mode);
     // The window is asked for once per server and model; an overflow error can say it too.
@@ -542,12 +792,21 @@ export class Session implements vscode.Disposable {
         this.windows.set(windowKey, found);
       }
     }
-    const window = (): number | undefined => backend.contextTokens ?? this.windows.get(windowKey);
     if (endpoint.apiKey === undefined && settings.needsKey(backend)) {
       const where = backend.apiKeyEnv !== undefined ? `, or set ${backend.apiKeyEnv} in the environment VS Code starts from` : "";
       this.add<"notice">({ kind: "notice", level: "error", text: `${backend.name} needs an API key: run “Worsley: Set API Key…”${where}.` });
+      return undefined;
+    }
+    return { backend, endpoint, windowKey, window: () => backend.contextTokens ?? this.windows.get(windowKey) };
+  }
+
+  /** Runs the model on the thread until it answers. Whether it said anything. */
+  private async run(ws: EditorWorkspace, mode: Mode): Promise<boolean> {
+    const connection = await this.connect(mode);
+    if (connection === undefined) {
       return false;
     }
+    const { backend, endpoint, windowKey, window } = connection;
 
     const controller = new AbortController();
     this.controller = controller;
@@ -908,6 +1167,15 @@ export class Session implements vscode.Disposable {
     this.post({ type: "context", chips });
   }
 
+  /** The level, to the panel, and to the `worsley.feature.*` context keys that menus and keybindings depend on. */
+  private postLevel(): void {
+    const offered = settings.features();
+    for (const feature of featuresAt(TOP_LEVEL)) {
+      void vscode.commands.executeCommand("setContext", `worsley.feature.${feature}`, offered.has(feature));
+    }
+    this.post({ type: "level", level: settings.level(), features: [...offered] });
+  }
+
   private postBackend(): void {
     const backend = settings.activeBackend();
     if (backend === undefined) {
@@ -916,6 +1184,15 @@ export class Session implements vscode.Disposable {
     }
     this.post({ type: "backend", label: `${backend.model} · ${backend.name}`, tooltip: `${backend.baseUrl}\nClick to choose another model.` });
   }
+}
+
+/** The backend a request goes to, and its model's context window, once known. */
+interface Connection {
+  backend: settings.Backend;
+  endpoint: Endpoint;
+  /** The server and model, which the window is known by. */
+  windowKey: string;
+  window(): number | undefined;
 }
 
 interface Totals {
@@ -968,6 +1245,11 @@ function kilo(n: number): string {
 
 function plural(n: number, word: string): string {
   return `${n} ${n === 1 ? word : `${word}s`}`;
+}
+
+/** A document's file name, as the panel shows it: `cart.py`, or `Untitled-1`. */
+function fileName(doc: vscode.TextDocument): string {
+  return path.basename(doc.uri.path);
 }
 
 /** Each place with the first few lines of its range, indentation trimmed. */

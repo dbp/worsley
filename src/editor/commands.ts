@@ -19,23 +19,34 @@ export function registerCommands(
   };
   // With a string argument (from a keybinding's `args`, or a test), the
   // request is sent at once; from a menu the argument is the file's URI.
+  // Menus and keybindings offer only what Worsley's level does (the
+  // `worsley.feature.*` context keys); a command run some other way says
+  // in the panel when its level doesn't offer it.
   register("worsley.ask", async (question?: unknown) => {
     if (typeof question === "string") {
       await session.send(question, "ask");
-    } else {
+    } else if (session.offers("ask")) {
       await panel.focus("ask");
     }
   });
   register("worsley.change", async (instruction?: unknown) => {
     if (typeof instruction === "string") {
       await session.send(instruction, "change");
-    } else {
+    } else if (session.offers("change")) {
       await panel.focus("change");
     }
   });
+  register("worsley.explainLine", async () => {
+    await panel.reveal();
+    await session.explainLine();
+  });
+  register("worsley.translate", async () => {
+    await panel.reveal();
+    await session.translate();
+  });
   register("worsley.tour", async () => {
     await panel.focus("ask");
-    await session.send(TOUR_REQUEST, "ask");
+    await session.send(TOUR_REQUEST, "ask", undefined, "tour");
   });
   register("worsley.reviewFile", async () => {
     await panel.focus("ask");

@@ -15,6 +15,11 @@
   box-sizing: border-box;
 }
 
+/* Over rules that set display, such as .modes's: what the level doesn't offer stays out of sight. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -215,6 +220,11 @@ kbd {
   border-left-color: var(--vscode-editorWarning-foreground, #cca700);
 }
 
+.item.user.explain,
+.item.user.translate {
+  border-left-color: var(--link);
+}
+
 .item.user .who {
   font-size: 0.8em;
   text-transform: uppercase;
@@ -224,6 +234,15 @@ kbd {
 
 .user-text {
   white-space: pre-wrap;
+}
+
+/* The code a request that stands alone is about. */
+.user-code {
+  margin: 2px 0 0;
+  font-family: var(--vscode-editor-font-family);
+  font-size: calc(var(--vscode-editor-font-size, 13px) * 0.95);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .user-context {
@@ -667,6 +686,12 @@ button.copy:hover {
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+#standalone {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 

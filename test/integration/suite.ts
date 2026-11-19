@@ -12,8 +12,11 @@ import type { HostMessage, Item } from "../../src/protocol";
  * edits, then the tests, which run without asking); review those changes,
  * of one file and of all; hold the next change for the uncommitted one,
  * cancel it, then send one anyway; commands that need approval, one allowed
- * by its class; and a two-step tour of the structure, each step opening its
- * code. test-electron calls `run`; a throw fails the run.
+ * by its class; a two-step tour of the structure, each step opening its
+ * code; and level 1, where only a line's explanation and a translation are
+ * offered, each with nothing but its own code, the translation put in place
+ * of the student's lines unless they changed meanwhile. test-electron calls
+ * `run`; a throw fails the run.
  */
 
 const WORKSPACE = process.env.WORSLEY_TEST_WORKSPACE ?? "";
@@ -247,4 +250,87 @@ async function scenario(): Promise<void> {
   await session.tourGo(0);
   assert.equal(session.snapshot.messages.length, before);
   assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, path.join(WORKSPACE, "src/cart.js"));
+
+  await levelOne(session, posted);
+}
+
+/**
+ * At level 1, as a course's workspace settings would set it: Ask and tours
+ * are refused; a line is explained, and pseudocode translated in place,
+ * each sent to the model with nothing but its own code and kept out of the
+ * thread the model sees for Ask and Change.
+ */
+async function levelOne(session: WorsleyApi["session"], posted: HostMessage[]): Promise<void> {
+  const items = (): readonly Item[] => session.snapshot.items;
+  const idle = (): Promise<true> => waitFor("the request to finish", () => !session.snapshot.busy);
+  const notices = (): string[] => items().flatMap((i) => (i.kind === "notice" ? [i.text] : []));
+  const config = vscode.workspace.getConfiguration("worsley");
+  await session.reset();
+  await config.update("level", 1, vscode.ConfigurationTarget.Workspace);
+  await waitFor("the panel to hear of level 1", () => posted.some((m) => m.type === "level" && m.level === 1 && m.features.join(",") === "explain,translate"));
+
+  await vscode.commands.executeCommand("worsley.ask", "What does this do?");
+  await vscode.commands.executeCommand("worsley.tour");
+  assert.deepEqual(notices(), ["Worsley is at level 1, which doesn't include asking about the code.", "Worsley is at level 1, which doesn't include tours."]);
+  assert.equal(session.snapshot.messages.length, 0, "nothing went to the model");
+  assert.equal(session.snapshot.tour, undefined);
+
+  // ---- A line, explained on its own.
+  const shipping = await vscode.window.showTextDocument(vscode.Uri.file(path.join(WORKSPACE, "src/shipping.js")));
+  shipping.selection = new vscode.Selection(10, 3, 10, 3);
+  await vscode.commands.executeCommand("worsley.explainLine");
+  await idle();
+  assert.deepEqual(items().filter((i) => i.kind === "user" || i.kind === "assistant").map(brief), [
+    "user(explain): module.exports = { shipping }; [shipping.js:11]",
+    "assistant: `module.exports` is what another file gets when it `require`s this one.",
+  ]);
+  assert.equal(session.snapshot.messages.length, 0, "the explanation stays out of the thread the model sees");
+  shipping.selection = new vscode.Selection(3, 0, 5, 3);
+  await vscode.commands.executeCommand("worsley.explainLine");
+  assert.equal(notices().at(-1), "Explain Line explains one line at a time. Put the cursor on the line to explain, or select part of it.");
+
+  // ---- Pseudocode, translated in place: from after the first line's
+  // indentation to the start of the line after the last, it is lines 4-8.
+  const original = shipping.document.getText();
+  shipping.selection = new vscode.Selection(3, 2, 8, 0);
+  await vscode.commands.executeCommand("worsley.translate");
+  await idle();
+  const translated = original.replace(
+    "  set cost to 5\n  if order's weight is more than 10\n    add 2 to cost\n  make it cheaper for members\n  return cost\n",
+    "  let cost = 5;\n  if (order.weight > 10) {\n    cost += 2;\n  }\n  make it cheaper for members\n  return cost;\n",
+  );
+  assert.equal(shipping.document.getText(), translated, `the translation took the lines' place, kept their indentation, and kept the line it couldn't translate: ${notices().join(" | ")}`);
+  assert.ok(shipping.document.isDirty, "the translation is in the editor, for the student to save");
+  assert.equal(fs.readFileSync(path.join(WORKSPACE, "src/shipping.js"), "utf8"), original, "and not yet on disk");
+  assert.equal(notices().at(-1), "Put the translation in shipping.js, at lines 4-9, in place of your lines. Undo in the editor brings them back.");
+  const asked = [...items()].reverse().find((i): i is Extract<Item, { kind: "user" }> => i.kind === "user");
+  assert.deepEqual(
+    [asked?.mode, asked?.text, asked?.context],
+    ["translate", "set cost to 5\nif order's weight is more than 10\n  add 2 to cost\nmake it cheaper for members\nreturn cost", ["shipping.js:4-8"]],
+  );
+  assert.equal(session.snapshot.messages.length, 0, "the translation stays out of the thread the model sees");
+  await vscode.window.showTextDocument(shipping.document);
+  await vscode.commands.executeCommand("undo");
+  assert.equal(shipping.document.getText(), original, "undo brings the student's lines back");
+
+  // ---- Lines changed while the model works aren't replaced.
+  shipping.selection = new vscode.Selection(3, 0, 7, 13);
+  const translating = vscode.commands.executeCommand("worsley.translate");
+  await waitFor("the translation to start", () => session.snapshot.busy);
+  await shipping.edit((edit) => edit.insert(new vscode.Position(0, 0), "// changed meanwhile\n"));
+  await translating;
+  await idle();
+  assert.equal(notices().at(-1), "shipping.js changed while Worsley was translating, so the translation isn't in it. Copy it from here instead.");
+  assert.equal(shipping.document.getText(), `// changed meanwhile\n${original}`);
+  await vscode.window.showTextDocument(shipping.document);
+  await vscode.commands.executeCommand("workbench.action.files.revert");
+
+  // ---- A file in no programming language has nothing to translate into.
+  const scratch = await vscode.workspace.openTextDocument({ content: "set x to 1\n", language: "plaintext" });
+  await vscode.window.showTextDocument(scratch);
+  await vscode.commands.executeCommand("worsley.translate");
+  assert.match(notices().at(-1) ?? "", /^Translate writes code in the language of the file the lines are in, and Untitled-\d+ isn't in a programming language\./);
+
+  await config.update("level", undefined, vscode.ConfigurationTarget.Workspace);
+  await waitFor("the panel to hear of level 2", () => posted.some((m) => m.type === "level" && m.level === 2 && m.features.length === 6));
 }

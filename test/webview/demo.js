@@ -1,5 +1,7 @@
 // Plays a thread into the panel, standing in for the extension. Choose it
-// with ?scene=ask|change|uncommitted|tour|empty, and ?theme=light for the light theme.
+// with ?scene=ask|change|uncommitted|tour|syntax|empty, ?theme=light for the
+// light theme, and ?level=1 for the panel at level 1 (the syntax scene's
+// default), where it offers only Explain line and Translate.
 "use strict";
 
 (() => {
@@ -8,6 +10,8 @@
     document.documentElement.classList.add("light");
   }
   const scene = params.get("scene") ?? "ask";
+  const level = Number(params.get("level") ?? (scene === "syntax" ? 1 : 2));
+  const features = level === 1 ? ["explain", "translate"] : ["explain", "translate", "ask", "change", "tour", "review"];
   const files = ["src/shop/cart.py", "src/shop/pricing.py", "src/shop/cli.py", "tests/test_cart.py", "README.md"];
   const post = (message) => window.postMessage(message, "*");
   const sent = [];
@@ -124,10 +128,53 @@
     { kind: "assistant", id: "t5", text: "[`Cart`](src/shop/cart.py#L12-L27) is the type the other modules pass around, but pricing never sees it: [`total`](src/shop/cart.py#L18-L27) hands `apply_discount` only an amount and a code, so", reasoning: "", streaming: true },
   ];
 
+  const syntax = [
+    { kind: "user", id: "s1", mode: "explain", text: "squares = [n ** 2 for n in numbers if n % 2 == 0]", context: ["stats.py:12"] },
+    {
+      kind: "assistant",
+      id: "s2",
+      reasoning: "",
+      streaming: false,
+      text:
+        "This line builds a new list with a **list comprehension**.\n\n" +
+        "- `squares =` gives the name `squares` to what is on the right.\n" +
+        "- `[ … ]`: the square brackets make a list.\n" +
+        "- `n ** 2` is what goes into the list for each item: `n` to the power of 2.\n" +
+        "- `for n in numbers` goes through `numbers` one item at a time, calling each one `n`.\n" +
+        "- `if n % 2 == 0` keeps only the items whose remainder after dividing by 2 is 0: the even ones.\n\n" +
+        "So `squares` becomes a list of the squares of the even numbers in `numbers`.",
+      stats: "4.1s · 214 generated · 61.2 tok/s",
+    },
+    {
+      kind: "user",
+      id: "s3",
+      mode: "translate",
+      text: "define a function average that takes numbers\n    set total to 0\n    for each n in numbers\n        add n to total\n    handle the case where numbers is empty\n    return total divided by length of numbers",
+      context: ["stats.py:20-25"],
+    },
+    {
+      kind: "assistant",
+      id: "s4",
+      reasoning: "",
+      streaming: false,
+      text:
+        "```python\ndef average(numbers):\n    total = 0\n    for n in numbers:\n        total += n\n    handle the case where numbers is empty\n    return total / len(numbers)\n```\n" +
+        "- \"handle the case where numbers is empty\": this says what to achieve, not the steps. Say what to do when there are no numbers.",
+      stats: "2.9s · 73 generated · 58.0 tok/s",
+    },
+    { kind: "notice", id: "s5", level: "info", text: "Put the translation in stats.py, at lines 20-25, in place of your lines. Undo in the editor brings them back." },
+  ];
+
   function play() {
+    post({ type: "level", level, features });
     post({ type: "backend", label: "Qwen3.6-35B-A3B-Q4_K_M · local", tooltip: "http://127.0.0.1:8080/v1" });
     if (scene === "empty") {
       post({ type: "reset", items: [], tour: undefined, busy: false, status: "" });
+      post({ type: "context", chips: chips.slice(1, 2) });
+      return;
+    }
+    if (scene === "syntax") {
+      post({ type: "reset", items: syntax, tour: undefined, busy: false, status: "" });
       post({ type: "context", chips: chips.slice(1, 2) });
       return;
     }

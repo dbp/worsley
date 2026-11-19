@@ -51,6 +51,36 @@ The backend is any OpenAI-compatible chat endpoint with tool calls: a local
 llama.cpp `llama-server` (the default), OpenRouter, or a server of your own
 elsewhere, such as llama.cpp or vLLM on another machine.
 
+## Levels
+
+For a course, Worsley can offer less at first, and more as the course goes
+on. `worsley.level` says how much: each level offers what the one below it
+does, and more. A course sets it for a workspace, in the
+`.vscode/settings.json` of the project its students start from. The menus,
+keybindings, command palette and panel show only what the level offers.
+
+- **Level 1** offers two requests that teach how code is written. Each
+  stands alone: the model sees only the code it is about, not the rest of
+  the file, nor the thread, and has no tools.
+  - **Explain a line.** Put the cursor on a line and press `Ctrl+Alt+X`
+    (`⌘⌥X`), or *Explain line* in the panel. The line is explained on its
+    own, part by part, as its language writes it: on its own, it can't be
+    explained by what the program around it is for. Selecting part of the
+    line asks about that part.
+  - **Translate pseudocode.** Write a program's steps in your own words,
+    select them and choose **Translate Into Code**, in the editor's context
+    menu or as *Translate* in the panel. They are written in the file's
+    language and put in place of what you wrote, which undo in the editor
+    brings back. The model is told to add nothing: no step, name, starting
+    value, check, conversion or message that isn't in the pseudocode, and a
+    mistake in the steps stays a mistake. A line that asks for code ("write
+    a function that sorts the list"), or says what to achieve rather than
+    how, or leaves out something the code needs ("if the price is too
+    high"), is to stay as you wrote it, with the reply saying what it would
+    need to be a step. How well a model keeps to this varies, and
+    `pnpm run live:translate` measures it (see Layout).
+- **Level 2**, the default, offers everything else as well.
+
 ## Trying it
 
 ```bash
@@ -94,6 +124,7 @@ backend; the thread carries on with whichever model answers next.
 | --- | --- |
 | `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, the environment variable holding its key (a backend that names one is used only with a key; any other is sent one only if **Worsley: Set API Key…** has stored it), `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`, and `contextTokens`, the model's context window, for a server that doesn't report it. User settings only, so a workspace can't send your code elsewhere. |
 | `worsley.backend` | Which of them is in use. |
+| `worsley.level` | How much of Worsley there is (see Levels): 1, explaining a line and translating pseudocode; 2, everything (the default). |
 | `worsley.testCommand` | The workspace's test command, such as `pytest -q`. It runs without asking. Empty: the model works out how the tests run, and each command needs approval. |
 | `worsley.commandTimeoutSeconds` | When a command is stopped (600). |
 | `worsley.context.maxFileLines` | Visible files up to this long are sent whole (600); longer ones as the lines on screen and 40 either side. |
@@ -104,6 +135,16 @@ Code goes to whichever backend is in use, and nowhere else: the panel loads
 nothing remote, not even images in a reply.
 
 ## How it works
+
+Explaining a line and translating are each one request, with a system
+prompt of their own and a single message: the line and its language, or the
+lines with the language and the editor's indentation (without the
+indentation the lines share, which the translation gets back). Neither
+joins the thread the model sees for Ask and Change, so nothing in that
+thread reaches them. A translation goes in only where the code was, if the
+file hasn't changed while the model worked; otherwise it is in the panel to
+copy. A reply without code, or whose code is what was there already, leaves
+the file alone.
 
 Each message is a request in *Ask* or *Change* mode, with an
 `<editor_context>` block: the visible files in the workspace folder, which
@@ -195,8 +236,9 @@ when they name one. A link to a folder reveals it in the Explorer.
   `git.ts`), which commands may run without asking (`commandLine.ts`),
   keeping a thread inside the model's window (`compact.ts`) and between
   windows (`saved.ts`), the editor
-  context (`context.ts`), links (`links.ts`, shared with the panel) and the
-  prompts (`prompts.ts`).
+  context (`context.ts`), links (`links.ts`, shared with the panel), the
+  prompts (`prompts.ts`), the levels (`levels.ts`), and level 1's requests
+  that stand alone (`standalone.ts`).
 - `src/editor/`: the VS Code side: the thread (`session.ts`), the panel's
   host (`panel.ts`), the workspace with its language servers
   (`workspace.ts`), the editor as the context sees it (`editorTracker.ts`),
@@ -213,11 +255,19 @@ when they name one. A link to a folder reveals it in the Explorer.
   references and a list of locations; link checks; a change with two edits
   and the tests; a review of those changes, of one file and of all; a change
   held back by uncommitted ones, cancelled and then sent anyway; a command that needs approval; a two-step tour of the
-  structure; and the thread kept for the next window.
+  structure; the thread kept for the next window; and level 1, where Ask
+  and tours are refused, a line is explained, and pseudocode is translated
+  in place, undone, and left alone when the file changes meanwhile.
 - `test/live/`: one request against a real model from the command line, with
   the same prompts and tools but no language servers (`run.ts`, which can
   send a selection and report times, tokens and broken links as JSON), and
-  six such tasks with checks, for comparing models (`suite.ts`).
+  six such tasks with checks, for comparing models (`suite.ts`). Translate
+  is measured on its own (`translations.ts`): pseudocode with traps in it,
+  such as a line that asks for code, a step without its value, a mistake to
+  keep, or input that mustn't become a number, each translated several
+  times. Every translation is checked for names, numbers, strings and
+  comments that aren't in the pseudocode (`details.ts`), and for what its
+  case expects.
 - `test/webview/`: the panel in a browser, with a stand-in for VS Code and a
   few demo threads, for working on how it looks.
 
@@ -233,7 +283,8 @@ pnpm run live -- --root samples/shop "How is the total worked out?"
 pnpm run live -- --root samples/shop --mode change --test-command "python3 -m unittest -q" "Make discount codes case-sensitive"
 node out/test/live/suite.js --out live-results --model ID   # six tasks on one model, checked
 node out/test/live/suite.js --out live-results --summary    # a table of every model run so far
-node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|empty, &theme=light
+pnpm run live:translate -- --base-url https://openrouter.ai/api/v1 --model ID --key-env OPENROUTER_API_KEY --extra '{}' --runs 3
+node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|syntax|empty, &theme=light, &level=1
 uv run scripts/icon-font.py # media/worsley.ttf, the status bar's sextant, from media/worsley.svg
 ```
 
@@ -242,7 +293,10 @@ into `.vscode-test/`. `WORSLEY_TEST_VSCODE` picks another: a version such as
 `stable`, or an installed VS Code's binary, such as `/usr/share/code/code`.
 `pnpm run live -- --help` lists its options; `--steps` explains a tour's
 steps one after another, and `--base-url`, `--model` and `--key-env` point
-it at OpenRouter.
+it at OpenRouter. `live:translate` takes the same, `--cases` to run only
+some, and `--show` to print each reply; it ends with a table of how many
+translations of each case passed, and how many added nothing to the
+pseudocode.
 
 ## Not yet
 
