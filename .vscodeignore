@@ -15,3 +15,5 @@ pnpm-lock.yaml
 samples/**
 scripts/**
 live-results/**
+# The marketplace icon's drawing: the package needs only the PNG made from it.
+media/icon.svg

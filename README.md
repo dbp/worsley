@@ -310,7 +310,9 @@ when they name one. A link to a folder reveals it in the Explorer.
 - `media/`: the panel's stylesheet and the sextant, drawn in `worsley.svg`
   for the activity bar. The status bar takes an extension's own icon only
   from a font, so `scripts/icon-font.py` builds `worsley.ttf` from the
-  drawing; run it again after changing the drawing.
+  drawing; run it again after changing the drawing. The marketplace's icon
+  is the same sextant in colour, `icon.svg`, which it takes only as a PNG:
+  `scripts/icon-png.py` makes `icon.png` from it, 128 by 128.
 - `test/unit/`: `node --test` tests of `src/core`, some against a fake
   OpenAI-compatible server (`test/fakeModel.ts`).
 - `test/integration/`: VS Code driven against the fake model, in a small
@@ -359,6 +361,7 @@ pnpm run live:translate -- --base-url https://openrouter.ai/api/v1 --model ID --
 pnpm run live:functions -- --base-url https://openrouter.ai/api/v1 --model ID --key-env OPENROUTER_API_KEY --extra '{}' --runs 3
 node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|syntax|functions|changes|empty, &theme=light, &level=1|2|3|N
 uv run scripts/icon-font.py # media/worsley.ttf, the status bar's sextant, from media/worsley.svg
+uv run scripts/icon-png.py  # media/icon.png, the marketplace's icon, from media/icon.svg
 ```
 
 The integration test downloads VS Code 1.101.0, the `engines.vscode` floor,

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- The marketplace icon: worsley.svg's sextant, in brass, steel and glass, on a night sea. -->
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#23395f"/>
+      <stop offset="1" stop-color="#0d1830"/>
+    </linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7d78e"/>
+      <stop offset="1" stop-color="#c38c2b"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#sea)"/>
+  <g fill="#ffffff">
+    <circle cx="22" cy="23" r="1.7" opacity="0.85"/>
+    <circle cx="105" cy="19" r="1.3" opacity="0.65"/>
+    <circle cx="31" cy="44" r="1" opacity="0.5"/>
+    <circle cx="99" cy="41" r="1.1" opacity="0.55"/>
+  </g>
+  <g transform="translate(0.3 4.46) scale(5.2)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- The arc, with its graduations. -->
+    <path d="M3.5 18.47A17 17 0 0 0 20.5 18.47L19 15.87A14 14 0 0 1 5 15.87Z" fill="url(#brass)" stroke="#f7d78e" stroke-width="0.8"/>
+    <path d="M7.67 17.06 6.75 19.92M10.54 17.67 10.22 20.66M13.46 17.67 13.78 20.66M16.33 17.06 17.25 19.92" stroke="#3b2a0c" stroke-width="0.55"/>
+    <!-- The frame, and the index arm. -->
+    <path d="M11.13 5.25 3.5 18.47M12.87 5.25 14.89 8.75M16.33 11.25 20.5 18.47M12.26 5.25 12.88 8.75M13.32 11.25 14.95 20.49" stroke="#f0c674" stroke-width="1.1"/>
+    <!-- The telescope. -->
+    <path d="M11 8.75H19V11.25H11Z" fill="#9fb4cc" stroke="#e3eaf2" stroke-width="0.8"/>
+    <path d="M19 10H21" stroke="#e3eaf2" stroke-width="1.1"/>
+    <!-- The index mirror. -->
+    <rect x="10" y="2.25" width="4" height="3" rx="0.5" fill="#7fc0ec" stroke="#e3eaf2" stroke-width="0.8"/>
+  </g>
+</svg>
