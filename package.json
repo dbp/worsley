@@ -1,7 +1,7 @@
 {
   "name": "worsley",
   "displayName": "Worsley",
-  "description": "An LLM that points you at the code: ask about a selection, change it across the codebase with the tests kept passing, or take a step-by-step tour. Works with a local llama.cpp server or OpenRouter.",
+  "description": "An assistant for learning to program, brought in a level at a time: explain a line, put right code written as near as a student can, check a function against its docstring and tests or write its body from them, review a change for what else it calls for, and at the last level ask about, tour and change a codebase. Works with a local llama.cpp server or OpenRouter.",
   "version": "0.1.0",
   "publisher": "worsley",
   "license": "MIT",
@@ -34,7 +34,9 @@
     "llama.cpp",
     "openrouter",
     "code reading",
-    "tour"
+    "tour",
+    "education",
+    "pseudocode"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
