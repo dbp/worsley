@@ -14,7 +14,7 @@ import {
   testAround,
   type Excerpt,
 } from "../../src/core/functions";
-import { featuresAt, LEVEL_N, levelOf, notAtLevel, NUMBERED, type LevelName } from "../../src/core/levels";
+import { featuresAt, LEVEL_N, levelOf, notAtLevel, NUMBERED, sectionsAt, type LevelName } from "../../src/core/levels";
 import {
   CHECK_SYSTEM,
   checkRequest,
@@ -33,10 +33,27 @@ import type { OutlineEntry } from "../../src/core/tools";
 import { addedDetails } from "../live/details";
 
 describe("the levels", () => {
-  it("are 1, explaining and translating; 2, checking and filling in functions; and N, everything", () => {
+  it("are 1, explaining and translating; 2, checking and filling in functions; 3, reviewing a file's changes; and N, everything", () => {
     assert.deepEqual([...featuresAt(1)].sort(), ["explain", "translate"]);
     assert.deepEqual([...featuresAt(2)].sort(), ["check", "explain", "fill", "translate"]);
-    assert.deepEqual([...featuresAt("N")].sort(), ["ask", "change", "check", "explain", "fill", "review", "tour", "translate"]);
+    assert.deepEqual([...featuresAt(3)].sort(), ["check", "explain", "fill", "reviewFile", "translate"]);
+    assert.deepEqual([...featuresAt("N")].sort(), ["ask", "change", "check", "explain", "fill", "reviewAll", "reviewFile", "tour", "translate"]);
+  });
+
+  it("group what they offer by the level each thing comes at, for the panel's buttons", () => {
+    assert.deepEqual(sectionsAt(2), [
+      { level: 1, name: "Syntax", features: ["explain", "translate"] },
+      { level: 2, name: "Functions", features: ["check", "fill"] },
+    ]);
+    assert.deepEqual(
+      sectionsAt("N").map((s) => [s.level, s.name]),
+      [
+        [1, "Syntax"],
+        [2, "Functions"],
+        [3, "Changes"],
+        ["N", "Everything"],
+      ],
+    );
   });
 
   it("each offer what the one below offers, and more", () => {
@@ -53,8 +70,8 @@ describe("the levels", () => {
 
   it("are named by number, the nearest that exists, or by N, the default", () => {
     assert.equal(levelOf(1), 1);
-    assert.equal(levelOf(2), 2);
-    assert.equal(levelOf(3), 2, "until there is a level 3");
+    assert.equal(levelOf(3), 3);
+    assert.equal(levelOf(4), 3, "until there is a level 4");
     assert.equal(levelOf(0), 1);
     assert.equal(levelOf(1.7), 1);
     assert.equal(levelOf("2"), 2);

@@ -1,5 +1,5 @@
 import { EXACTLY } from "../core/commandLine";
-import type { Approval, ContextChip, Feature, HostMessage, Item, LinkStatus, Mode, PanelMessage, Request, Standalone, ToolIcon, TourView } from "../protocol";
+import type { Approval, ContextChip, Feature, HostMessage, Item, LevelSection, LinkStatus, Mode, PanelMessage, Request, Standalone, ToolIcon, TourView } from "../protocol";
 import { applyStatuses, collectRefs, renderMarkdown } from "./markdown";
 
 /**
@@ -45,17 +45,22 @@ const tourBar = h("div", { id: "tour", hidden: true, tabindex: "-1" });
 const thread = h("main", { id: "thread", tabindex: "-1" });
 const empty = h("div", { id: "empty" });
 thread.append(empty);
-// The requests that stand alone, about what the editor has selected.
-const STANDALONE_BUTTONS: Record<Standalone, [label: string, title: string]> = {
-  explain: ["Explain line", `Explain the line the cursor is on, on its own (${keys("X")})`],
-  translate: ["Translate", "Translate the selected pseudocode into code, in the file's language"],
-  check: ["Check function", "Check the function the cursor is in against its documentation and the tests that call it"],
-  fill: ["Fill in function", "Write the body of the function the cursor is in, from its documentation and the tests that call it"],
+/**
+ * The buttons for what the levels offer, each with what it says, its
+ * tooltip and what clicking it does. Ask and Change have the message box
+ * instead.
+ */
+const BUTTONS: Partial<Record<Feature, { label: string; title: string; data: Record<string, string> }>> = {
+  explain: { label: "Explain line", title: `Explain the line the cursor is on, on its own (${keys("X")})`, data: { action: "standalone", request: "explain" } },
+  translate: { label: "Translate", title: "Translate the selected pseudocode into code, in the file's language", data: { action: "standalone", request: "translate" } },
+  check: { label: "Check function", title: "Check the function the cursor is in against its documentation and the tests that call it", data: { action: "standalone", request: "check" } },
+  fill: { label: "Fill in function", title: "Write the body of the function the cursor is in, from its documentation and the tests that call it", data: { action: "standalone", request: "fill" } },
+  reviewFile: { label: "Review my changes", title: "Review what you have changed in the file in the editor since the last commit: what else your change calls for", data: { action: "review", scope: "file" } },
+  tour: { label: "Tour this codebase", title: "A tour of how this codebase is structured", data: { action: "start-tour" } },
+  reviewAll: { label: "Review all changes", title: "Review everything you have changed in the workspace since the last commit", data: { action: "review", scope: "all" } },
 };
-const standaloneButtons = (["explain", "translate", "check", "fill"] as const).map((request) =>
-  h("button", { className: "secondary", "data-action": "standalone", "data-request": request, title: STANDALONE_BUTTONS[request][1] }, STANDALONE_BUTTONS[request][0]),
-);
-const standaloneRow = h("div", { id: "standalone" }, ...standaloneButtons);
+// The buttons, a row for each level, labelled with the level they come from.
+const levelsBox = h("div", { id: "levels", role: "group", "aria-label": "What your level offers" });
 const chipsRow = h("div", { id: "chips" });
 const input = h("textarea", { id: "input", rows: "3", "aria-label": "Message" });
 const modeButtons = (["ask", "change"] as const).map((m) =>
@@ -72,15 +77,16 @@ const modesGroup = h("div", { className: "modes", role: "group", "aria-label": "
 const statusText = h("span", { id: "status" });
 const sendButton = h("button", { id: "send", className: "primary" }, "Send");
 const backendButton = h("button", { id: "backend", className: "link-button", title: "Choose another model" });
-const composer = h("footer", { id: "composer" }, standaloneRow, chipsRow, input, h("div", { id: "controls" }, modesGroup, statusText, sendButton), backendButton);
+const composer = h("footer", { id: "composer" }, levelsBox, chipsRow, input, h("div", { id: "controls" }, modesGroup, statusText, sendButton), backendButton);
 app.append(tourBar, thread, composer);
 
 // ---- State
 
 let busy = false;
 let mode: Mode = "ask";
-/** What Worsley's level offers: everything, until the extension says. */
-let features = new Set<Feature>(["explain", "translate", "check", "fill", "ask", "change", "tour", "review"]);
+/** What Worsley's level offers, and the levels it is made of: nothing, until the extension says. */
+let features = new Set<Feature>();
+let sections: LevelSection[] = [];
 let chipCount = 0;
 let tour: TourView | undefined;
 const items = new Map<string, Item>();
@@ -452,7 +458,6 @@ function offeredModes(): Mode[] {
 function drawEmpty(): void {
   const paragraphs: Child[] = [];
   const modes = offeredModes();
-  const standalone = features.has("explain") || features.has("translate") || features.has("check") || features.has("fill");
   if (modes.length > 0) {
     paragraphs.push(h("p", { className: "empty-title" }, "Read the code, with help."));
     const how: Child[] = ["Select some code and press "];
@@ -474,7 +479,7 @@ function drawEmpty(): void {
         ),
       );
     }
-  } else if (standalone) {
+  } else if (features.size > 0) {
     paragraphs.push(h("p", { className: "empty-title" }, "Learn how code is written."));
   }
   if (features.has("explain")) {
@@ -523,10 +528,43 @@ function drawEmpty(): void {
       ),
     );
   }
-  if (features.has("tour")) {
-    paragraphs.push(h("button", { className: "secondary", "data-action": "start-tour" }, "Tour this codebase"));
+  if (features.has("reviewFile")) {
+    paragraphs.push(
+      h(
+        "p",
+        {},
+        "Change a file, then press ",
+        h("em", {}, "Review my changes"),
+        ": Worsley reads what you have changed in it since your last commit, and says what else in the program the change calls for, such as code that uses what you changed, tests or documentation.",
+      ),
+    );
   }
   empty.replaceChildren(...paragraphs.filter((p): p is Node => p !== undefined && p !== false && typeof p !== "string"));
+}
+
+/**
+ * The buttons, a row for each level up to Worsley's, labelled with the
+ * level they come from: so that what a student can do at each level, and
+ * what came when, shows in the panel.
+ */
+function drawLevels(): void {
+  const rows = sections.flatMap((section) => {
+    const buttons = section.features.flatMap((feature) => {
+      const button = BUTTONS[feature];
+      if (button === undefined) {
+        return [];
+      }
+      const data = Object.fromEntries(Object.entries(button.data).map(([key, value]) => [`data-${key}`, value]));
+      return [h("button", { className: "secondary", title: button.title, disabled: busy, ...data }, button.label)];
+    });
+    if (buttons.length === 0) {
+      return [];
+    }
+    const label = h("span", { className: "level-label", title: `Level ${section.level}: ${section.name}` }, h("span", { className: "level-number" }, String(section.level)), h("span", {}, section.name));
+    return [label, h("div", { className: "level-buttons" }, ...buttons)];
+  });
+  levelsBox.replaceChildren(...rows);
+  levelsBox.hidden = rows.length === 0;
 }
 
 /** Shows what the level offers, and only that. */
@@ -538,10 +576,7 @@ function applyFeatures(): void {
   modesGroup.hidden = modes.length < 2;
   input.hidden = modes.length === 0;
   chipsRow.hidden = chipCount === 0 || modes.length === 0;
-  for (const button of standaloneButtons) {
-    button.hidden = !features.has(button.dataset.request as Standalone);
-  }
-  standaloneRow.hidden = standaloneButtons.every((button) => button.hidden);
+  drawLevels();
   const first = modes[0];
   if (!modes.includes(mode) && first !== undefined) {
     setMode(first);
@@ -587,7 +622,7 @@ function setBusy(next: boolean, status: string): void {
   sendButton.className = busy ? "secondary" : "primary";
   // Without a message box, the button is there only to stop a request.
   sendButton.hidden = !busy && offeredModes().length === 0;
-  for (const button of standaloneButtons) {
+  for (const button of levelsBox.querySelectorAll("button")) {
     button.disabled = busy;
   }
   drawTour();
@@ -662,6 +697,9 @@ document.addEventListener("click", (event) => {
         return;
       case "standalone":
         send({ type: "standalone", request: data.request as Standalone });
+        return;
+      case "review":
+        send({ type: "review", scope: data.scope === "all" ? "all" : "file" });
         return;
       case "copy":
         send({ type: "copy", text: data.copy ?? "" });
@@ -766,6 +804,7 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
       return;
     case "level":
       features = new Set(message.features);
+      sections = message.sections;
       applyFeatures();
       return;
   }

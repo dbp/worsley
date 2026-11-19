@@ -21,8 +21,19 @@ export type Standalone = "explain" | "translate" | "check" | "fill";
 /** What a user's message in the thread asked for. */
 export type Request = Mode | Standalone;
 
-/** Something Worsley does, which its level offers or doesn't (see core/levels.ts). */
-export type Feature = Request | "tour" | "review";
+/**
+ * Something Worsley does, which its level offers or doesn't (see
+ * core/levels.ts). Besides the requests: tours, and reviews of the user's
+ * uncommitted changes, to the file in the editor or to all of them.
+ */
+export type Feature = Request | "tour" | "reviewFile" | "reviewAll";
+
+/** A level, as the panel groups its buttons: what it is called, and what it adds to the one below. */
+export interface LevelSection {
+  level: number | "N";
+  name: string;
+  features: Feature[];
+}
 
 /** Something in the editor that the next message will include. */
 export interface ContextChip {
@@ -129,8 +140,11 @@ export type HostMessage =
   /** Which of the links in an assistant item lead somewhere. */
   | { type: "links"; id: string; statuses: Record<string, LinkStatus> }
   | { type: "focus"; mode?: Mode; text?: string }
-  /** What Worsley offers at its level, which the panel shows and nothing else. */
-  | { type: "level"; level: number | "N"; features: Feature[] };
+  /**
+   * What Worsley offers at its level, which the panel shows and nothing
+   * else: every feature, and the levels up to this one, each with what it adds.
+   */
+  | { type: "level"; level: number | "N"; features: Feature[]; sections: LevelSection[] };
 
 export type PanelMessage =
   | { type: "ready" }
@@ -152,4 +166,6 @@ export type PanelMessage =
   | { type: "copy"; text: string }
   | { type: "pickBackend" }
   /** A request that stands alone, about what the editor has selected. */
-  | { type: "standalone"; request: Standalone };
+  | { type: "standalone"; request: Standalone }
+  /** A review of the user's uncommitted changes, to the file in the editor or to all of them. */
+  | { type: "review"; scope: "file" | "all" };

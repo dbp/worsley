@@ -128,6 +128,9 @@ export class PanelProvider implements vscode.WebviewViewProvider, vscode.Disposa
       case "startTour":
         void vscode.commands.executeCommand("worsley.tour");
         return;
+      case "review":
+        void session.reviewChanges(message.scope);
+        return;
       case "standalone": {
         const run = { explain: () => session.explainLine(), translate: () => session.translate(), check: () => session.checkFunction(), fill: () => session.fillFunction() };
         void run[message.request]();

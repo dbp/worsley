@@ -184,12 +184,12 @@
       "view/title": [
         {
           "command": "worsley.reviewFile",
-          "when": "view == worsley.panel && worsley.feature.review",
+          "when": "view == worsley.panel && worsley.feature.reviewFile",
           "group": "navigation@1"
         },
         {
           "command": "worsley.reviewAll",
-          "when": "view == worsley.panel && worsley.feature.review",
+          "when": "view == worsley.panel && worsley.feature.reviewAll",
           "group": "navigation@2"
         },
         {
@@ -249,11 +249,11 @@
         },
         {
           "command": "worsley.reviewFile",
-          "when": "worsley.feature.review"
+          "when": "worsley.feature.reviewFile"
         },
         {
           "command": "worsley.reviewAll",
-          "when": "worsley.feature.review"
+          "when": "worsley.feature.reviewAll"
         },
         {
           "command": "worsley.allowedCommands",
@@ -401,17 +401,20 @@
           "enum": [
             1,
             2,
+            3,
             "N"
           ],
           "enumItemLabels": [
             "1: Syntax",
             "2: Functions",
+            "3: Changes",
             "N: Everything"
           ],
           "markdownEnumDescriptions": [
             "**Explain This Line**, which explains one line of code on its own, and **Translate Into Code**, which turns pseudocode into code without adding to it.",
             "Level 1, with **Check This Function**, which reads a function against its docstring and the tests that call it, and **Fill In This Function**, which writes its body from them.",
-            "Everything: asking about the code, changing it, tours and reviews, besides what the numbered levels offer."
+            "Level 2, with **Review My Changes to This File**, which says what else in the program a change to the file in the editor calls for.",
+            "Everything: asking about the code, changing it, tours and reviews of all your changes, besides what the numbered levels offer."
           ],
           "default": "N",
           "markdownDescription": "How much of Worsley there is, for a course that brings it in a little at a time. Each level offers what the one below it does, and more; level N, the last, offers everything, and leaves room for numbered levels before it. A course can set it for a workspace, in the `.vscode/settings.json` of the project its students start from."

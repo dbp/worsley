@@ -21,7 +21,7 @@ import {
   type LineRange,
 } from "../core/functions";
 import { isGitRepo, uncommittedChanges, uncommittedDiff } from "../core/git";
-import { ALL_FEATURES, notAtLevel } from "../core/levels";
+import { ALL_FEATURES, notAtLevel, sectionsAt } from "../core/levels";
 import { foldersOf, formatHref, labelRef, parseCodeRef, resolvePath, type CodeRef } from "../core/links";
 import { workspacePath } from "../core/paths";
 import { reviewRequest, reviewTitle, systemPrompt, tourStepRequest, userRequest, WALK_CHANGES } from "../core/prompts";
@@ -295,7 +295,8 @@ export class Session implements vscode.Disposable {
    * call for other changes, or have implications worth knowing.
    */
   async reviewChanges(scope: "file" | "all"): Promise<void> {
-    if (!this.offers("review")) {
+    const feature = scope === "file" ? "reviewFile" : "reviewAll";
+    if (!this.offers(feature)) {
       return;
     }
     if (this.busy) {
@@ -318,7 +319,11 @@ export class Session implements vscode.Disposable {
     }
     const diff = await uncommittedDiff(ws.root, file);
     if (diff === undefined) {
-      this.add<"notice">({ kind: "notice", level: "info", text: "This folder isn't in a git repository, so there are no uncommitted changes to review." });
+      this.add<"notice">({
+        kind: "notice",
+        level: "info",
+        text: "This folder isn't in a git repository, so Worsley can't tell what you have changed: a review looks at what has changed since the last commit.",
+      });
       return;
     }
     if (diff.trim() === "") {
@@ -331,7 +336,7 @@ export class Session implements vscode.Disposable {
     if (unsaved.length > 0) {
       this.add<"notice">({ kind: "notice", level: "info", text: `Not saved, so not in the review: ${unsaved.join(", ")}.` });
     }
-    await this.send(reviewTitle(file), "ask", reviewRequest(file, diff), "review");
+    await this.send(reviewTitle(file), "ask", reviewRequest(file, diff), feature);
   }
 
   async walkChanges(): Promise<void> {
@@ -1387,7 +1392,8 @@ export class Session implements vscode.Disposable {
     for (const feature of ALL_FEATURES) {
       void vscode.commands.executeCommand("setContext", `worsley.feature.${feature}`, offered.has(feature));
     }
-    this.post({ type: "level", level: settings.level(), features: [...offered] });
+    const level = settings.level();
+    this.post({ type: "level", level, features: [...offered], sections: sectionsAt(level) });
   }
 
   private postBackend(): void {

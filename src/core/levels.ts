@@ -1,4 +1,4 @@
-import type { Feature } from "../protocol";
+import type { Feature, LevelSection } from "../protocol";
 
 /**
  * Worsley's levels, for a course that brings its help in a little at a
@@ -6,15 +6,17 @@ import type { Feature } from "../protocol";
  * teaches how code is written: explaining one line on its own, and
  * translating pseudocode into code without adding to it. Level 2 works on
  * whole functions: checking one against its documentation and tests, and
- * writing a body from them. Level N, the last, offers everything else, and
- * leaves room for numbered levels before it as a course needs them.
+ * writing a body from them. Level 3 works on a change to a file: what else
+ * in the program it calls for, so that a change to a design made in one
+ * place can be finished everywhere. Level N, the last, offers everything
+ * else, and leaves room for numbered levels before it as a course needs them.
  */
 
 /** A level as the setting names it: a numbered one, or "N", the last. */
 export type LevelName = number | "N";
 
 export interface Level {
-  /** What the setting calls it. */
+  /** What the setting and the panel call it. */
   name: string;
   /** What this level adds to the one before it. */
   adds: readonly Feature[];
@@ -24,14 +26,15 @@ export interface Level {
 export const NUMBERED: readonly Level[] = [
   { name: "Syntax", adds: ["explain", "translate"] },
   { name: "Functions", adds: ["check", "fill"] },
+  { name: "Changes", adds: ["reviewFile"] },
 ];
 
 /** Level N: everything that no numbered level offers yet. */
-export const LEVEL_N: Level = { name: "Everything", adds: ["ask", "change", "tour", "review"] };
+export const LEVEL_N: Level = { name: "Everything", adds: ["ask", "change", "tour", "reviewAll"] };
 
 /**
  * The level a setting's value names. A number is a numbered level, the
- * nearest that exists, so that 3 is level 2 until there is a level 3. "N",
+ * nearest that exists, so that 4 is level 3 until there is a level 4. "N",
  * and anything else, is level N, which is also the default.
  */
 export function levelOf(value: unknown): LevelName {
@@ -39,10 +42,15 @@ export function levelOf(value: unknown): LevelName {
   return Number.isFinite(n) ? Math.min(NUMBERED.length, Math.max(1, Math.floor(n))) : "N";
 }
 
+/** The levels up to `level`, and it, each with what it adds: how the panel groups its buttons. */
+export function sectionsAt(level: LevelName): LevelSection[] {
+  const numbered = NUMBERED.slice(0, level === "N" ? NUMBERED.length : level).map((l, i) => ({ level: i + 1, name: l.name, features: [...l.adds] }));
+  return level === "N" ? [...numbered, { level: "N", name: LEVEL_N.name, features: [...LEVEL_N.adds] }] : numbered;
+}
+
 /** What `level` offers: what it adds, and what every level below it does. */
 export function featuresAt(level: LevelName): ReadonlySet<Feature> {
-  const levels = level === "N" ? [...NUMBERED, LEVEL_N] : NUMBERED.slice(0, level);
-  return new Set(levels.flatMap((l) => l.adds));
+  return new Set(sectionsAt(level).flatMap((section) => section.features));
 }
 
 /** Every feature, as level N offers them. */
@@ -53,10 +61,11 @@ const FEATURE_NAMES: Record<Feature, string> = {
   translate: "translating pseudocode",
   check: "checking a function against its documentation and tests",
   fill: "filling in a function",
+  reviewFile: "reviewing your changes to a file",
   ask: "asking about the code",
   change: "changing the code",
   tour: "tours",
-  review: "reviewing your changes",
+  reviewAll: "reviewing all your changes at once",
 };
 
 /** Why a request wasn't made: the feature it needs isn't part of `level`. */

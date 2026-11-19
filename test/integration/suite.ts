@@ -253,6 +253,7 @@ async function scenario(): Promise<void> {
 
   await levelOne(session, posted);
   await levelTwo(session, posted);
+  await levelThree(session, posted);
 }
 
 /**
@@ -389,7 +390,46 @@ async function levelTwo(session: WorsleyApi["session"], posted: HostMessage[]): 
   await vscode.window.showTextDocument(discount.document);
   await vscode.commands.executeCommand("undo");
   assert.equal(discount.document.getText(), original, "undo brings the placeholder back");
+}
+
+/**
+ * At level 3, which keeps levels 1 and 2: a review of what the Change left
+ * uncommitted in the file in the editor, sent with its diff; a review of
+ * all the changes, and Ask, are refused. Back at level N, the panel hears
+ * of everything, a section for each level.
+ */
+async function levelThree(session: WorsleyApi["session"], posted: HostMessage[]): Promise<void> {
+  const items = (): readonly Item[] => session.snapshot.items;
+  const idle = (): Promise<true> => waitFor("the request to finish", () => !session.snapshot.busy);
+  const notices = (): string[] => items().flatMap((i) => (i.kind === "notice" ? [i.text] : []));
+  const config = vscode.workspace.getConfiguration("worsley");
+  await session.reset();
+  await config.update("level", 3, vscode.ConfigurationTarget.Workspace);
+  const heard = await waitFor("the panel to hear of level 3", () =>
+    posted.find((m): m is Extract<HostMessage, { type: "level" }> => m.type === "level" && m.level === 3 && m.features.join(",") === "explain,translate,check,fill,reviewFile"),
+  );
+  assert.deepEqual(
+    heard.sections.map((s) => `${s.level} ${s.name}: ${s.features.join(", ")}`),
+    ["1 Syntax: explain, translate", "2 Functions: check, fill", "3 Changes: reviewFile"],
+  );
+  await vscode.commands.executeCommand("worsley.reviewAll");
+  await vscode.commands.executeCommand("worsley.ask", "What does this do?");
+  assert.deepEqual(notices(), ["Worsley is at level 3, which doesn't include reviewing all your changes at once.", "Worsley is at level 3, which doesn't include asking about the code."]);
+
+  await vscode.window.showTextDocument(vscode.Uri.file(path.join(WORKSPACE, "src/cart.js")));
+  await vscode.commands.executeCommand("worsley.reviewFile");
+  await idle();
+  const asked = [...items()].reverse().find((i): i is Extract<Item, { kind: "user" }> => i.kind === "user");
+  assert.deepEqual([asked?.mode, asked?.text], ["ask", "Review my uncommitted changes to src/cart.js."]);
+  assert.ok(items().some((i) => i.kind === "assistant" && i.text.startsWith("Reviewed src/cart.js: ")), `the review: ${items().map(brief).join(" | ")}`);
+  const sent = [...session.snapshot.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+  assert.match(sent, /<diff>\ndiff --git a\/src\/cart\.js b\/src\/cart\.js\n/, "the review went with the file's diff");
 
   await config.update("level", undefined, vscode.ConfigurationTarget.Workspace);
-  await waitFor("the panel to hear of level N", () => posted.some((m) => m.type === "level" && m.level === "N" && m.features.length === 8));
+  const all = await waitFor("the panel to hear of level N", () => posted.find((m): m is Extract<HostMessage, { type: "level" }> => m.type === "level" && m.level === "N"));
+  assert.equal(all.features.length, 9);
+  assert.deepEqual(
+    all.sections.map((s) => s.level),
+    [1, 2, 3, "N"],
+  );
 }

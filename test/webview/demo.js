@@ -1,8 +1,9 @@
 // Plays a thread into the panel, standing in for the extension. Choose it
-// with ?scene=ask|change|uncommitted|tour|syntax|functions|empty, ?theme=light
-// for the light theme, and ?level=1|2|N for the panel at that level: 1 (the
-// syntax scene's default) offers only Explain line and Translate, 2 (the
-// functions scene's) Check function and Fill in function besides, and N
+// with ?scene=ask|change|uncommitted|tour|syntax|functions|changes|empty,
+// ?theme=light for the light theme, and ?level=1|2|3|N for the panel at that
+// level: 1 (the syntax scene's default) offers only Explain line and
+// Translate, 2 (the functions scene's) Check function and Fill in function
+// besides, 3 (the changes scene's) Review my changes besides, and N
 // everything.
 "use strict";
 
@@ -12,9 +13,17 @@
     document.documentElement.classList.add("light");
   }
   const scene = params.get("scene") ?? "ask";
-  const level = params.get("level") ?? (scene === "syntax" ? "1" : scene === "functions" ? "2" : "N");
-  const byLevel = { 1: ["explain", "translate"], 2: ["explain", "translate", "check", "fill"] };
-  const features = byLevel[level] ?? ["explain", "translate", "check", "fill", "ask", "change", "tour", "review"];
+  const defaults = { syntax: "1", functions: "2", changes: "3" };
+  const level = params.get("level") ?? defaults[scene] ?? "N";
+  // As core/levels.ts has them.
+  const levels = [
+    { level: 1, name: "Syntax", features: ["explain", "translate"] },
+    { level: 2, name: "Functions", features: ["check", "fill"] },
+    { level: 3, name: "Changes", features: ["reviewFile"] },
+    { level: "N", name: "Everything", features: ["ask", "change", "tour", "reviewAll"] },
+  ];
+  const sections = level === "N" ? levels : levels.slice(0, Number(level));
+  const features = sections.flatMap((section) => section.features);
   const files = ["src/shop/cart.py", "src/shop/pricing.py", "src/shop/cli.py", "tests/test_cart.py", "README.md", "shipping.py", "test_shipping.py", "stats.py", "test_stats.py"];
   const post = (message) => window.postMessage(message, "*");
   const sent = [];
@@ -192,11 +201,39 @@
     { kind: "notice", id: "f5", level: "info", text: "Filled in average in stats.py, at lines 1-3. Undo in the editor brings back what was there." },
   ];
 
+  const changes = [
+    { kind: "user", id: "r1", mode: "ask", text: "Review my uncommitted changes to src/shop/pricing.py.", context: ["pricing.py"] },
+    { kind: "tool", id: "r2", icon: "references", summary: "Found 3 references to apply_discount", detail: "src/shop/cart.py:21: subtotal = apply_discount(subtotal, self.code)\nsrc/shop/cli.py:44: print(apply_discount(total, args.code))\ntests/test_cart.py:30: assert apply_discount(10, 'SAVE10') == 9", status: "done" },
+    {
+      kind: "locations",
+      id: "r3",
+      title: "What still calls apply_discount with one code",
+      locations: [
+        { href: "src/shop/cart.py#L21", label: "src/shop/cart.py:21", note: "passes self.code, a single code", preview: "subtotal = apply_discount(subtotal, self.code)" },
+        { href: "src/shop/cli.py#L44", label: "src/shop/cli.py:44", note: "passes args.code", preview: "print(apply_discount(total, args.code))" },
+        { href: "tests/test_cart.py#L30", label: "tests/test_cart.py:30", note: "tests the old form", preview: "assert apply_discount(10, 'SAVE10') == 9" },
+      ],
+    },
+    {
+      kind: "assistant",
+      id: "r4",
+      reasoning: "",
+      streaming: false,
+      text: "[`apply_discount`](src/shop/pricing.py#L8-L19) now takes a list of codes, but its three callers still pass one code each, so `cart.py` will loop over the letters of `SAVE10`. The docstring still says *code*, too.",
+      stats: "9.6s · 4 rounds · 6.1K context · 188 generated",
+    },
+  ];
+
   function play() {
-    post({ type: "level", level: level === "N" ? "N" : Number(level), features });
+    post({ type: "level", level: level === "N" ? "N" : Number(level), features, sections });
     if (scene === "functions") {
       post({ type: "backend", label: "deepseek/deepseek-v4.1-flash-1017 · openrouter", tooltip: "https://openrouter.ai/api/v1" });
       post({ type: "reset", items: functions, tour: undefined, busy: false, status: "" });
+      return;
+    }
+    if (scene === "changes") {
+      post({ type: "backend", label: "deepseek/deepseek-v4.1-flash-1017 · openrouter", tooltip: "https://openrouter.ai/api/v1" });
+      post({ type: "reset", items: changes, tour: undefined, busy: false, status: "" });
       return;
     }
     post({ type: "backend", label: "Qwen3.6-35B-A3B-Q4_K_M · local", tooltip: "http://127.0.0.1:8080/v1" });

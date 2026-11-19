@@ -40,7 +40,8 @@ explanation can range across files and link to each place it is about.
   message back in the box. Afterwards there is a list of changed files, each
   with its git diff, and *Walk me through it*, which tours the changes.
 - **Review your own changes.** The first two buttons at the top of the
-  panel ask for a light review of what you have changed by hand and not
+  panel, and *Review my changes* and *Review all changes* below the thread,
+  ask for a light review of what you have changed by hand and not
   committed: in the file open in the editor, or in the whole workspace. It is
   an Ask, with the `git diff` (new files whole): not about style, but whether
   the changes call for others, such as callers, tests or documentation that
@@ -55,16 +56,19 @@ elsewhere, such as llama.cpp or vLLM on another machine.
 
 For a course, Worsley can offer less at first, and more as the course goes
 on. `worsley.level` says how much: each level offers what the one below it
-does, and more. Levels 1 and 2 are numbered; level N, the last and the
-default, has everything else, and leaves room for levels 3, 4 and so on
+does, and more. Levels 1 to 3 are numbered; level N, the last and the
+default, has everything else, and leaves room for levels 4, 5 and so on
 before it, as a course finds it needs them. A course sets the level for a
 workspace, in the `.vscode/settings.json` of the project its students start
 from. The menus, keybindings, command palette and panel show only what the
-level offers.
+level offers. The panel's buttons are grouped by level, a row for each,
+labelled with its number and name, so that a student sees what each level
+added.
 
-The numbered levels' requests each stand alone: the model sees only the
+The requests of levels 1 and 2 each stand alone: the model sees only the
 code a request is about, not the rest of the file, nor the thread, and has
-no tools.
+no tools. Level 3's looks through the rest of the program, as Ask does, but
+changes nothing.
 
 - **Level 1** offers two requests that teach how code is written.
   - **Explain a line.** Put the cursor on a line and press `Ctrl+Alt+X`
@@ -107,8 +111,17 @@ no tools.
     written, and the reply says why. A function with a body already, or with
     no tests, isn't filled in. The tests can start as pseudocode, made code
     with Translate. `pnpm run live:functions` measures both requests.
+- **Level 3** works on a change to a file, for when a change to a design is
+  made in one place and not yet everywhere else it reaches.
+  - **Review your changes.** Change a file, then choose **Review My Changes
+    to This File** (*Review my changes* in the panel). It is the light
+    review described above, of what has changed in the file in the editor
+    since the last commit: what else the change calls for, such as code
+    that still uses what was changed the old way, tests, or documentation,
+    each place linked, and often listed to click through. It needs the
+    folder to be a git repository, to know what has changed.
 - **Level N**, the default, offers everything else as well: asking, changing,
-  tours and reviews.
+  tours, and reviews of all the uncommitted changes at once.
 
 ## Trying it
 
@@ -153,7 +166,7 @@ backend; the thread carries on with whichever model answers next.
 | --- | --- |
 | `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, the environment variable holding its key (a backend that names one is used only with a key; any other is sent one only if **Worsley: Set API Key…** has stored it), `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`, and `contextTokens`, the model's context window, for a server that doesn't report it. User settings only, so a workspace can't send your code elsewhere. |
 | `worsley.backend` | Which of them is in use. |
-| `worsley.level` | How much of Worsley there is (see Levels): 1, explaining a line and translating pseudocode; 2, checking and filling in functions as well; `"N"`, everything (the default). A number with no level of its own yet is the highest numbered level below it. |
+| `worsley.level` | How much of Worsley there is (see Levels): 1, explaining a line and translating pseudocode; 2, checking and filling in functions as well; 3, reviewing the changes to a file as well; `"N"`, everything (the default). A number with no level of its own yet is the highest numbered level below it. |
 | `worsley.testCommand` | The workspace's test command, such as `pytest -q`. It runs without asking. Empty: the model works out how the tests run, and each command needs approval. |
 | `worsley.commandTimeoutSeconds` | When a command is stopped (600). |
 | `worsley.context.maxFileLines` | Visible files up to this long are sent whole (600); longer ones as the lines on screen and 40 either side. |
@@ -302,10 +315,12 @@ when they name one. A link to a folder reveals it in the Explorer.
   held back by uncommitted ones, cancelled and then sent anyway; a command that needs approval; a two-step tour of the
   structure; the thread kept for the next window; level 1, where Ask and
   tours are refused, a line is explained, and pseudocode is translated in
-  place, undone, and left alone when the file changes meanwhile; and level
-  2, where a function is checked against the tests the language server
-  finds, and one is filled in, keeping its doc comment, while one with a
-  body, or with no tests, is left alone.
+  place, undone, and left alone when the file changes meanwhile; level 2,
+  where a function is checked against the tests the language server finds,
+  and one is filled in, keeping its doc comment, while one with a body, or
+  with no tests, is left alone; and level 3, where a file's changes are
+  reviewed, with its diff, and a review of all of them, and Ask, are
+  refused.
 - `test/live/`: one request against a real model from the command line, with
   the same prompts and tools but no language servers (`run.ts`, which can
   send a selection and report times, tokens and broken links as JSON), and
@@ -337,7 +352,7 @@ node out/test/live/suite.js --out live-results --model ID   # six tasks on one m
 node out/test/live/suite.js --out live-results --summary    # a table of every model run so far
 pnpm run live:translate -- --base-url https://openrouter.ai/api/v1 --model ID --key-env OPENROUTER_API_KEY --extra '{}' --runs 3
 pnpm run live:functions -- --base-url https://openrouter.ai/api/v1 --model ID --key-env OPENROUTER_API_KEY --extra '{}' --runs 3
-node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|syntax|functions|empty, &theme=light, &level=1|2|N
+node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|syntax|functions|changes|empty, &theme=light, &level=1|2|3|N
 uv run scripts/icon-font.py # media/worsley.ttf, the status bar's sextant, from media/worsley.svg
 ```
 
