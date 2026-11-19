@@ -52,7 +52,7 @@ thread.append(empty);
  */
 const BUTTONS: Partial<Record<Feature, { label: string; title: string; data: Record<string, string> }>> = {
   explain: { label: "Explain line", title: `Explain the line the cursor is on, on its own (${keys("X")})`, data: { action: "standalone", request: "explain" } },
-  translate: { label: "Translate", title: "Translate the selected pseudocode into code, in the file's language", data: { action: "standalone", request: "translate" } },
+  translate: { label: "Translate", title: "Put right how the selected code is written, pseudocode and all, in the file's language", data: { action: "standalone", request: "translate" } },
   check: { label: "Check function", title: "Check the function or method the cursor is in against its documentation and the tests that call it", data: { action: "standalone", request: "check" } },
   fill: { label: "Fill in function", title: "Write the body of the function or method the cursor is in, from its documentation and the tests that call it", data: { action: "standalone", request: "fill" } },
   reviewFile: { label: "Review my changes", title: "Review what you have changed in the file in the editor since the last commit: what else your change calls for", data: { action: "review", scope: "file" } },
@@ -511,9 +511,9 @@ function drawEmpty(): void {
       h(
         "p",
         {},
-        "Write the steps of a program in your own words, select them and press ",
+        "Write code as near as you can get it, mistakes and all, with pseudocode where you don't know how to write something. Select it and press ",
         h("em", {}, "Translate"),
-        ": Worsley writes them in the file's language, adding nothing of its own. A line that asks for code, rather than saying what to do, stays as you wrote it.",
+        ": Worsley puts right how it is written, in the file's language, and adds nothing of its own, so what the code does is still yours. A line that asks for code, rather than writing it, stays as you wrote it.",
       ),
     );
   }

@@ -78,17 +78,21 @@ changes nothing.
     own, part by part, as its language writes it: on its own, it can't be
     explained by what the program around it is for. Selecting part of the
     line asks about that part.
-  - **Translate pseudocode.** Write a program's steps in your own words,
-    select them and choose **Translate Into Code**, in the editor's context
-    menu or as *Translate* in the panel. They are written in the file's
-    language and put in place of what you wrote, which undo in the editor
-    brings back. The model is told to add nothing: no step, name, starting
-    value, check, conversion or message that isn't in the pseudocode, and a
-    mistake in the steps stays a mistake. A line that asks for code ("write
-    a function that sorts the list"), or says what to achieve rather than
-    how, or leaves out something the code needs ("if the price is too
-    high"), is to stay as you wrote it, with the reply saying what it would
-    need to be a step. How well a model keeps to this varies, and
+  - **Translate pseudocode.** Write code as near as you can get it,
+    mistakes and all, with pseudocode where you don't know how to write
+    something; select it and choose **Translate Into Code**, in the
+    editor's context menu or as *Translate* in the panel. How it is written
+    is put right in the file's language (missing colons and brackets,
+    misspelled keywords, indentation that won't run, habits from another
+    language such as `&&` or `.push`), the pseudocode becomes code, and the
+    result goes in place of what you wrote, which undo in the editor brings
+    back. What the code does stays yours: the model is told to add nothing,
+    no step, name, starting value, check, conversion or message that isn't
+    in what you wrote, and a mistake in the logic stays a mistake. A line
+    that asks for code ("write a function that sorts the list"), or says
+    what to achieve rather than how, or leaves out something the code needs
+    ("if the price is too high"), is to stay as you wrote it, with the reply
+    saying what it would need. How well a model keeps to this varies, and
     `pnpm run live:translate` measures it (see Layout).
 - **Level 2**, *Specs*, works on a function or method and its spec, its
   docstring and tests: reading the code against them, and writing it from
@@ -332,10 +336,10 @@ when they name one. A link to a folder reveals it in the Explorer.
   the same prompts and tools but no language servers (`run.ts`, which can
   send a selection and report times, tokens and broken links as JSON), and
   six such tasks with checks, for comparing models (`suite.ts`). Translate
-  is measured on its own (`translations.ts`): pseudocode with traps in it,
-  such as a line that asks for code, a step without its value, a mistake to
-  keep, or input that mustn't become a number, each translated several
-  times. Every translation is checked for names, numbers, strings and
+  is measured on its own (`translations.ts`): code with mistakes in how it
+  is written, and pseudocode with traps in it, such as a line that asks for
+  code, a step without its value, a mistake in the logic to keep, or input
+  that mustn't become a number, each translated several times. Every translation is checked for names, numbers, strings and
   comments that aren't in the pseudocode (`details.ts`), and for what its
   case expects. Level 2 is measured too (`functions.ts`), in Python: checks
   of functions that fit their docstrings and tests, and of functions with

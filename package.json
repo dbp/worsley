@@ -416,7 +416,7 @@
             "N: Everything"
           ],
           "markdownEnumDescriptions": [
-            "**Explain This Line**, which explains one line of code on its own, and **Translate Into Code**, which turns pseudocode into code without adding to it.",
+            "**Explain This Line**, which explains one line of code on its own, and **Translate Into Code**, which puts right how code is written, mistakes, pseudocode and all, without adding to it.",
             "Level 1, with **Check This Function**, which reads a function or method against its docstring and the tests that call it, and **Fill In This Function**, which writes its body from them.",
             "Level 2, with **Review My Changes to This File**, which says what else in the program a change to the file in the editor calls for.",
             "Everything: asking about the code, changing it, tours and reviews of all your changes, besides what the numbered levels offer."

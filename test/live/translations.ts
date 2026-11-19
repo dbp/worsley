@@ -171,6 +171,38 @@ const CASES: Case[] = [
     match: [/^if x == 5:$/m, /^ {4}print\(x\)$/m, /^else:$/m, /^ {4}x (?:\+= 1|= x \+ 1)$/m],
   },
   {
+    name: "code-with-typos",
+    language: "python",
+    lines: "def total(prices)\n    sum = 0\n    for p in prices\n        sum += p\n    retrun sum",
+    match: [/^def total\(prices\):$/m, /^ {4}sum = 0$/m, /^ {4}for p in prices:$/m, /^ {8}sum \+= p$/m, /^ {4}return sum$/m],
+  },
+  {
+    name: "other-language-habits",
+    language: "python",
+    lines: "if (count > 10 && done == true) {\n    names.push(name)\n    console.log(names.length)\n}",
+    match: [/^if \(?count > 10 and done(?: == True)?\)?:$/m, /^ {4}names\.append\(name\)$/m, /^ {4}print\(len\(names\)\)$/m],
+    noMatch: [/&&|\.push|console|\.length|[{}]/],
+  },
+  {
+    name: "keeps-mistake-in-code",
+    language: "python",
+    lines: "for i in range(1, len(items))\n    print(items[i]",
+    match: [/^for i in range\(1, len\(items\)\):$/m, /^ {4}print\(items\[i\]\)$/m],
+    noMatch: [/range\(len\(items\)\)|range\(0,/],
+  },
+  {
+    name: "unindented-block",
+    language: "python",
+    lines: "for name in names:\nprint(name)",
+    match: [/^for name in names:$/m, /^ {4}print\(name\)$/m],
+  },
+  {
+    name: "java-fixes",
+    language: "java",
+    lines: "int count = 0\nfor (String w : words) {\n    if (w.length > 3) {\n        count++\n    }\n}\nSystem.out.println(count)",
+    match: [/^int count = 0;$/m, /w\.length\(\) > 3/, /count\+\+;/, /^System\.out\.println\(count\);$/m],
+  },
+  {
     name: "built-in-steps",
     language: "python",
     lines: "sort the names\nprint the first name",
