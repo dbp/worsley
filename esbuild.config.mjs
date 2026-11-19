@@ -76,7 +76,7 @@ const testOptions = [
   },
   {
     ...baseOptions,
-    entryPoints: ["test/live/run.ts", "test/live/suite.ts", "test/live/translations.ts"],
+    entryPoints: ["test/live/run.ts", "test/live/suite.ts", "test/live/translations.ts", "test/live/functions.ts"],
     outdir: "out/test/live",
     platform: "node",
     format: "cjs",

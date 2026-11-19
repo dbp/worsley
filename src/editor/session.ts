@@ -7,17 +7,35 @@ import { TokenGauge, withRoom, type Compaction } from "../core/compact";
 import { contextChips, formatContext, rangeText } from "../core/context";
 import { errorText } from "../core/errorText";
 import { numberLines, splitLines, summarizeFiles } from "../core/files";
+import {
+  docStart,
+  excerptEnd,
+  functionAt,
+  functionName,
+  hasBody,
+  keepsLines,
+  mergeRanges,
+  pythonFunctionAt,
+  testAround,
+  type Excerpt,
+  type LineRange,
+} from "../core/functions";
 import { isGitRepo, uncommittedChanges, uncommittedDiff } from "../core/git";
-import { featuresAt, notAtLevel, TOP_LEVEL } from "../core/levels";
+import { ALL_FEATURES, notAtLevel } from "../core/levels";
 import { foldersOf, formatHref, labelRef, parseCodeRef, resolvePath, type CodeRef } from "../core/links";
 import { workspacePath } from "../core/paths";
 import { reviewRequest, reviewTitle, systemPrompt, tourStepRequest, userRequest, WALK_CHANGES } from "../core/prompts";
 import { interrupted, parseSaved, type SavedThread } from "../core/saved";
+import { search } from "../core/search";
 import {
+  CHECK_SYSTEM,
+  checkRequest,
   codeIn,
   dedent,
   EXPLAIN_SYSTEM,
   explainRequest,
+  FILL_SYSTEM,
+  fillRequest,
   indentUnit,
   languageName,
   reindent,
@@ -26,7 +44,7 @@ import {
   translateRequest,
   type LineSpan,
 } from "../core/standalone";
-import { TOOLS, type Place, type ToolContext, type ToolUi, type TourPlan } from "../core/tools";
+import { TOOLS, type OutlineEntry, type Place, type ToolContext, type ToolUi, type TourPlan } from "../core/tools";
 import type { Approval, ChangedFile, Feature, HostMessage, Item, LinkStatus, LocationView, Mode, Standalone, TourView } from "../protocol";
 import type { EditorTracker } from "./editorTracker";
 import type { Highlighter } from "./highlight";
@@ -43,6 +61,8 @@ const PREFIXES_KEY = "worsley.allowedPrefixes";
 const UPDATE_MS = 60;
 /** The thread is kept this long after it last changed, so that a burst of changes is written once. */
 const SAVE_MS = 500;
+/** The most lines of tests that go with a function to check or fill in. */
+const MAX_TEST_LINES = 300;
 
 interface Listing {
   files: ReadonlySet<string>;
@@ -516,7 +536,7 @@ export class Session implements vscode.Disposable {
     await this.whileBusy(async () => {
       await this.standalone("explain", {
         text: line,
-        where: `${fileName(doc)}:${span.first + 1}`,
+        context: [`${fileName(doc)}:${span.first + 1}`],
         system: EXPLAIN_SYSTEM,
         prompt: explainRequest(line, languageName(doc.languageId), part),
       });
@@ -556,18 +576,102 @@ export class Session implements vscode.Disposable {
     // Sent without the indentation they share, which the translation gets back.
     const { lines: bare, indent } = dedent(lines);
     const block = bare.join("\n");
-    const unit = indentUnit(editor.options.insertSpaces !== false, typeof editor.options.tabSize === "number" ? editor.options.tabSize : 4);
     const version = doc.version;
     await this.whileBusy(async () => {
       const reply = await this.standalone("translate", {
         text: block,
-        where: `${fileName(doc)}:${rangeText({ start: span.first + 1, end: span.last + 1 })}`,
+        context: [`${fileName(doc)}:${rangeText({ start: span.first + 1, end: span.last + 1 })}`],
         system: TRANSLATE_SYSTEM,
-        prompt: translateRequest(block, language, unit),
+        prompt: translateRequest(block, language, indentOf(editor)),
       });
-      if (reply !== undefined) {
-        await this.putTranslation(doc, { span, version, lines, indent }, reply);
+      if (reply === undefined) {
+        return;
       }
+      await this.putCode(doc, { span, version, lines, indent }, reply, {
+        none: "The reply has no code to put in the editor, so your lines are as you wrote them.",
+        same: "The translation is what you wrote already, so the editor is unchanged.",
+        what: "the translation",
+        done: (where) => `Put the translation in ${where}, in place of your lines. Undo in the editor brings them back.`,
+      });
+    });
+  }
+
+  /**
+   * Checks the function the cursor is in against its documentation and the
+   * tests that call it: whether they fit together, or the code contradicts
+   * them, or does what neither mentions. The model sees the function and
+   * its tests, and nothing else.
+   */
+  async checkFunction(): Promise<void> {
+    const editor = this.standaloneEditor("check");
+    if (editor === undefined) {
+      return;
+    }
+    await this.whileBusy(async () => {
+      const found = await this.functionAndTests(editor);
+      if (found === undefined) {
+        return;
+      }
+      const { fn, tests, header, language } = found;
+      await this.standalone("check", {
+        text: header,
+        context: [fn, ...tests].map(excerptLabel),
+        system: CHECK_SYSTEM,
+        prompt: checkRequest(fn, tests, language),
+      });
+    });
+  }
+
+  /**
+   * Writes the body of the function the cursor is in from its documentation
+   * and the tests that call it, and puts it in place of the placeholder
+   * there. The model sees the function and its tests, and nothing else; the
+   * header, the documentation and any other line of the function must come
+   * back as they were, or the function is left alone.
+   */
+  async fillFunction(): Promise<void> {
+    const editor = this.standaloneEditor("fill");
+    if (editor === undefined) {
+      return;
+    }
+    const doc = editor.document;
+    const version = doc.version;
+    await this.whileBusy(async () => {
+      const found = await this.functionAndTests(editor, (fn, name) =>
+        hasBody(fn.lines)
+          ? `${name} has a body already. Fill In writes the body of a function that has only its header, its documentation and tests, and perhaps a placeholder such as pass.`
+          : undefined,
+      );
+      if (found === undefined) {
+        return;
+      }
+      const { fn, name, tests, header, language } = found;
+      if (tests.length === 0) {
+        this.add<"notice">({
+          kind: "notice",
+          level: "info",
+          text: `No tests that call ${name} were found, and Fill In writes a body from its documentation and its tests. Write some tests that call it first: Translate can turn tests written in pseudocode into code.`,
+        });
+        return;
+      }
+      const { lines: bare, indent } = dedent(fn.lines);
+      const reply = await this.standalone("fill", {
+        text: header,
+        context: [fn, ...tests].map(excerptLabel),
+        system: FILL_SYSTEM,
+        prompt: fillRequest({ ...fn, lines: bare }, tests, language, indentOf(editor)),
+      });
+      if (reply === undefined) {
+        return;
+      }
+      const span = { first: fn.start - 1, last: excerptEnd(fn) - 1 };
+      await this.putCode(doc, { span, version, lines: fn.lines, indent }, reply, {
+        none: `Nothing was filled in, so ${name} is as it was.`,
+        same: `Nothing was filled in, so ${name} is as it was.`,
+        what: `the body of ${name}`,
+        check: (written) => (keepsLines(fn.lines, written) ? undefined : `The reply changes ${name}'s header or documentation, so it isn't in the editor. Copy the body from here instead.`),
+        done: (where) => `Filled in ${name} in ${where}. Undo in the editor brings back what was there.`,
+      });
     });
   }
 
@@ -585,21 +689,125 @@ export class Session implements vscode.Disposable {
     }
     const editor = vscode.window.activeTextEditor;
     if (editor === undefined || (editor.document.uri.scheme !== "file" && editor.document.uri.scheme !== "untitled")) {
-      const what = request === "explain" ? "put the cursor on the line to explain" : "select the lines to translate";
-      this.add<"notice">({ kind: "notice", level: "info", text: `In the editor, ${what} first.` });
+      const what: Record<Standalone, string> = {
+        explain: "put the cursor on the line to explain",
+        translate: "select the lines to translate",
+        check: "put the cursor in the function to check",
+        fill: "put the cursor in the function to fill in",
+      };
+      this.add<"notice">({ kind: "notice", level: "info", text: `In the editor, ${what[request]} first.` });
       return undefined;
     }
     return editor;
   }
 
   /**
+   * The function the cursor is in, or that is selected, with the comments
+   * and decorators above it, and the tests that call it. `refuse` says why
+   * the request can't go ahead with this function, if it can't. Undefined,
+   * with a notice saying why, when there is no function there, or it was
+   * refused.
+   */
+  private async functionAndTests(
+    editor: vscode.TextEditor,
+    refuse?: (fn: Excerpt, name: string) => string | undefined,
+  ): Promise<{ fn: Excerpt; name: string; header: string; tests: Excerpt[]; language: string } | undefined> {
+    const notice = (text: string): undefined => {
+      this.add<"notice">({ kind: "notice", level: "info", text });
+      return undefined;
+    };
+    const doc = editor.document;
+    const ws = this.currentWorkspace();
+    const path = ws !== undefined && doc.uri.scheme === "file" ? workspacePath(ws.root, doc.uri.fsPath) : undefined;
+    if (ws === undefined || path === undefined) {
+      return notice("This works on a function in a file of the workspace folder, where Worsley can find its tests. Open the folder, or save the file in it.");
+    }
+    const language = languageName(doc.languageId);
+    if (language === undefined) {
+      return notice(`${fileName(doc)} isn't in a programming language, so it has no functions to work on.`);
+    }
+    this.setStatus("Finding the function…");
+    const lines = splitLines(doc.getText());
+    const span = selectedLines(editor.selection.start, editor.selection.end);
+    let found: { start: number; end: number; name?: string } | undefined;
+    if (span.last > span.first) {
+      found = { start: span.first + 1, end: span.last + 1 };
+    } else {
+      const outline = await ws.outline(path).catch(() => undefined);
+      found = (outline !== undefined ? functionAt(outline, editor.selection.active.line + 1) : undefined) ?? pythonFunctionAt(lines, editor.selection.active.line + 1);
+    }
+    if (found === undefined) {
+      return notice("Put the cursor in a function, or select the whole of one, and try again.");
+    }
+    const start = docStart(lines, found.start);
+    const fn: Excerpt = { path, start, lines: lines.slice(start - 1, found.end) };
+    // The header: the first line of the function that isn't a comment or a decorator.
+    const headerLine = lines.findIndex((line, i) => i >= found.start - 1 && i < found.end && line.trim() !== "" && !/^(?:#|\/\/|\/\*|\*|--|;|@)/.test(line.trim())) + 1;
+    const header = (lines[headerLine - 1] ?? "").trim();
+    const name = found.name !== undefined && /^[A-Za-z_$][\w$]*$/.test(found.name) ? found.name : functionName(header);
+    if (name === undefined) {
+      return notice("Worsley couldn't tell that function's name, which it needs to find the tests that call it.");
+    }
+    const refused = refuse?.(fn, name);
+    if (refused !== undefined) {
+      return notice(refused);
+    }
+    this.setStatus(`Finding the tests that call ${name}…`);
+    const column = new RegExp(`(?<![\\w$])${escapeRegExp(name)}(?![\\w$])`).exec(lines[headerLine - 1] ?? "")?.index;
+    const tests = await this.testsOf(ws, { path, start, end: found.end }, name, column === undefined ? undefined : { line: headerLine, character: column });
+    return { fn, name, header, tests, language };
+  }
+
+  /**
+   * The tests that call a function: each test function, or line of tests,
+   * that the language server's references or a search for calls by name
+   * find, in a test file or a test function. At most MAX_TEST_LINES of them.
+   */
+  private async testsOf(ws: EditorWorkspace, fn: LineRange, name: string, at: { line: number; character: number } | undefined): Promise<Excerpt[]> {
+    const places = at === undefined ? [] : await ws.references(fn.path, at.line, at.character).catch(() => []);
+    // ripgrep's regular expressions have no lookbehind, so a word boundary marks where the name starts.
+    const pattern = `${/^\w/.test(name) ? "\\b" : ""}${escapeRegExp(name)}\\s*\\(`;
+    const calls = await search(ws.root, { pattern, literal: false, caseSensitive: true, limit: 300 }, () => ws.listFiles(), ws.ripgrep, AbortSignal.timeout(20_000)).catch(() => ({ matches: [] }));
+    places.push(...calls.matches.map((m) => ({ path: m.path, start: m.line, end: m.line })));
+    const files = new Map<string, { lines: string[]; outline: OutlineEntry[] | undefined } | undefined>();
+    const ranges: LineRange[] = [];
+    for (const place of places) {
+      if (place.path.startsWith("/") || (place.path === fn.path && place.start >= fn.start && place.start <= fn.end)) {
+        continue;
+      }
+      if (!files.has(place.path)) {
+        const text = await ws.readText(place.path).catch(() => undefined);
+        files.set(place.path, text === undefined ? undefined : { lines: splitLines(text), outline: await ws.outline(place.path).catch(() => undefined) });
+      }
+      const file = files.get(place.path);
+      const range = file === undefined ? undefined : testAround(file.lines, file.outline, place.path, place.start);
+      if (range !== undefined) {
+        ranges.push(range);
+      }
+    }
+    const tests: Excerpt[] = [];
+    let total = 0;
+    for (const range of mergeRanges(ranges)) {
+      const lines = files.get(range.path)?.lines.slice(range.start - 1, range.end) ?? [];
+      if (total + lines.length > MAX_TEST_LINES) {
+        break;
+      }
+      total += lines.length;
+      tests.push({ path: range.path, start: range.start, lines });
+    }
+    return tests;
+  }
+
+  /**
    * Asks a request that stands alone: its own system prompt and one message,
    * for one reply. The thread the model sees for Ask and Change is left as it
    * is, so nothing in it reaches the model, and nothing from here joins it.
-   * The reply, once it is complete; undefined when there is none.
+   * `context` is where the code the request is about comes from, as the
+   * panel shows it. The reply, once it is complete; undefined when there is
+   * none.
    */
-  private async standalone(request: Standalone, ask: { text: string; where: string; system: string; prompt: string }): Promise<string | undefined> {
-    this.add<"user">({ kind: "user", mode: request, text: ask.text, context: [ask.where] });
+  private async standalone(request: Standalone, ask: { text: string; context: string[]; system: string; prompt: string }): Promise<string | undefined> {
+    this.add<"user">({ kind: "user", mode: request, text: ask.text, context: ask.context });
     const connection = await this.connect("ask");
     if (connection === undefined) {
       return undefined;
@@ -659,43 +867,49 @@ export class Session implements vscode.Disposable {
   }
 
   /**
-   * Puts the code in a translation's reply in place of the lines it was
-   * made from, if they are still as they were. Undo in the editor brings
-   * them back. A line the model couldn't translate is in the code as the
-   * student wrote it, so it stays.
+   * Puts the code in a reply in place of the lines it was made from, if they
+   * are still as they were and `says.check` finds nothing wrong with it. Undo
+   * in the editor brings the lines back. A notice says what happened, in the
+   * words `says` gives.
    */
-  private async putTranslation(
+  private async putCode(
     doc: vscode.TextDocument,
     from: { span: LineSpan; version: number; lines: string[]; indent: string },
     reply: string,
+    says: { none: string; same: string; what: string; done(where: string): string; check?(written: string[]): string | undefined },
   ): Promise<void> {
     const notice = (level: "info" | "warning", text: string): void => {
       this.add<"notice">({ kind: "notice", level, text });
     };
     const code = codeIn(reply);
-    const translated = code === undefined ? [] : reindent(code, from.indent);
-    if (translated.every((line) => line === "")) {
-      notice("info", "The reply has no code to put in the editor, so your lines are as you wrote them.");
+    const written = code === undefined ? [] : reindent(code, from.indent);
+    if (written.every((line) => line === "")) {
+      notice("info", says.none);
       return;
     }
-    if (translated.join("\n") === from.lines.map((line) => line.replace(/[ \t]+$/, "")).join("\n")) {
-      notice("info", "The translation is what you wrote already, so the editor is unchanged.");
+    if (written.join("\n") === from.lines.map((line) => line.replace(/[ \t]+$/, "")).join("\n")) {
+      notice("info", says.same);
+      return;
+    }
+    const wrong = says.check?.(written);
+    if (wrong !== undefined) {
+      notice("warning", wrong);
       return;
     }
     if (doc.isClosed || doc.version !== from.version) {
-      notice("warning", `${fileName(doc)} changed while Worsley was translating, so the translation isn't in it. Copy it from here instead.`);
+      notice("warning", `${fileName(doc)} changed while Worsley was working, so ${says.what} isn't in it. Copy it from here instead.`);
       return;
     }
     const { first, last } = from.span;
     const edit = new vscode.WorkspaceEdit();
-    edit.replace(doc.uri, new vscode.Range(first, 0, last, doc.lineAt(last).text.length), translated.join(doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n"));
+    edit.replace(doc.uri, new vscode.Range(first, 0, last, doc.lineAt(last).text.length), written.join(doc.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n"));
     if (!(await vscode.workspace.applyEdit(edit))) {
-      notice("warning", `Couldn't put the translation in ${fileName(doc)}. Copy it from here instead.`);
+      notice("warning", `Couldn't put ${says.what} in ${fileName(doc)}. Copy it from here instead.`);
       return;
     }
-    const lines = { start: first + 1, end: first + translated.length };
+    const lines = { start: first + 1, end: first + written.length };
     this.deps.highlighter.set([{ uri: doc.uri, ...lines }]);
-    notice("info", `Put the translation in ${fileName(doc)}, at ${lines.start === lines.end ? `line ${lines.start}` : `lines ${rangeText(lines)}`}, in place of your lines. Undo in the editor brings them back.`);
+    notice("info", says.done(`${fileName(doc)}, at ${lines.start === lines.end ? `line ${lines.start}` : `lines ${rangeText(lines)}`}`));
   }
 
   // ---- Running a request
@@ -1170,7 +1384,7 @@ export class Session implements vscode.Disposable {
   /** The level, to the panel, and to the `worsley.feature.*` context keys that menus and keybindings depend on. */
   private postLevel(): void {
     const offered = settings.features();
-    for (const feature of featuresAt(TOP_LEVEL)) {
+    for (const feature of ALL_FEATURES) {
       void vscode.commands.executeCommand("setContext", `worsley.feature.${feature}`, offered.has(feature));
     }
     this.post({ type: "level", level: settings.level(), features: [...offered] });
@@ -1250,6 +1464,20 @@ function plural(n: number, word: string): string {
 /** A document's file name, as the panel shows it: `cart.py`, or `Untitled-1`. */
 function fileName(doc: vscode.TextDocument): string {
   return path.basename(doc.uri.path);
+}
+
+/** Lines of a file as the panel shows them: `cart.py:3-9`. */
+function excerptLabel(excerpt: Excerpt): string {
+  return `${path.basename(excerpt.path)}:${rangeText({ start: excerpt.start, end: excerptEnd(excerpt) })}`;
+}
+
+/** How the editor indents, as code written for it should. */
+function indentOf(editor: vscode.TextEditor): string {
+  return indentUnit(editor.options.insertSpaces !== false, typeof editor.options.tabSize === "number" ? editor.options.tabSize : 4);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Each place with the first few lines of its range, indentation trimmed. */

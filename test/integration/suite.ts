@@ -252,6 +252,7 @@ async function scenario(): Promise<void> {
   assert.equal(vscode.window.activeTextEditor?.document.uri.fsPath, path.join(WORKSPACE, "src/cart.js"));
 
   await levelOne(session, posted);
+  await levelTwo(session, posted);
 }
 
 /**
@@ -320,7 +321,7 @@ async function levelOne(session: WorsleyApi["session"], posted: HostMessage[]): 
   await shipping.edit((edit) => edit.insert(new vscode.Position(0, 0), "// changed meanwhile\n"));
   await translating;
   await idle();
-  assert.equal(notices().at(-1), "shipping.js changed while Worsley was translating, so the translation isn't in it. Copy it from here instead.");
+  assert.equal(notices().at(-1), "shipping.js changed while Worsley was working, so the translation isn't in it. Copy it from here instead.");
   assert.equal(shipping.document.getText(), `// changed meanwhile\n${original}`);
   await vscode.window.showTextDocument(shipping.document);
   await vscode.commands.executeCommand("workbench.action.files.revert");
@@ -330,7 +331,65 @@ async function levelOne(session: WorsleyApi["session"], posted: HostMessage[]): 
   await vscode.window.showTextDocument(scratch);
   await vscode.commands.executeCommand("worsley.translate");
   assert.match(notices().at(-1) ?? "", /^Translate writes code in the language of the file the lines are in, and Untitled-\d+ isn't in a programming language\./);
+  await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+}
+
+/**
+ * At level 2, which keeps level 1's requests: Ask is refused; a function is
+ * checked against the tests that call it, found by the language server; a
+ * function with a body, or with no tests, isn't filled in; and one with a
+ * placeholder and tests is, in place, keeping its doc comment.
+ */
+async function levelTwo(session: WorsleyApi["session"], posted: HostMessage[]): Promise<void> {
+  const items = (): readonly Item[] => session.snapshot.items;
+  const idle = (): Promise<true> => waitFor("the request to finish", () => !session.snapshot.busy);
+  const notices = (): string[] => items().flatMap((i) => (i.kind === "notice" ? [i.text] : []));
+  const lastUser = (): Extract<Item, { kind: "user" }> | undefined => [...items()].reverse().find((i): i is Extract<Item, { kind: "user" }> => i.kind === "user");
+  const config = vscode.workspace.getConfiguration("worsley");
+  await session.reset();
+  await config.update("level", 2, vscode.ConfigurationTarget.Workspace);
+  await waitFor("the panel to hear of level 2", () => posted.some((m) => m.type === "level" && m.level === 2 && m.features.join(",") === "explain,translate,check,fill"));
+  await vscode.commands.executeCommand("worsley.ask", "What does this do?");
+  assert.deepEqual(notices(), ["Worsley is at level 2, which doesn't include asking about the code."]);
+
+  // ---- total, as the Change left it, checked against the tests that call it.
+  const cart = await vscode.window.showTextDocument(vscode.Uri.file(path.join(WORKSPACE, "src/cart.js")));
+  cart.selection = new vscode.Selection(3, 4, 3, 4);
+  await vscode.commands.executeCommand("worsley.checkFunction");
+  await idle();
+  const checked = lastUser();
+  // Its tests are the callbacks node:test is given, each found whole.
+  assert.deepEqual([checked?.mode, checked?.text, checked?.context], ["check", "function total(items, discount = 0) {", ["cart.js:3-5", "cart.test.js:6-8", "cart.test.js:10-12"]]);
+  assert.ok(items().some((i) => i.kind === "assistant" && i.text.startsWith("**They fit.**")), `the check's reply: ${items().map(brief).join(" | ")}`);
+  assert.equal(session.snapshot.messages.length, 0, "the check stays out of the thread the model sees");
+
+  // ---- Fill In won't touch a function with a body, or one without tests.
+  await vscode.commands.executeCommand("worsley.fillFunction");
+  await idle();
+  assert.equal(notices().at(-1), "total has a body already. Fill In writes the body of a function that has only its header, its documentation and tests, and perhaps a placeholder such as pass.");
+  const discount = await vscode.window.showTextDocument(vscode.Uri.file(path.join(WORKSPACE, "src/discount.js")));
+  discount.selection = new vscode.Selection(13, 2, 13, 2);
+  await vscode.commands.executeCommand("worsley.fillFunction");
+  await idle();
+  assert.match(notices().at(-1) ?? "", /^No tests that call taxed were found, and Fill In writes a body from its documentation and its tests\./);
+
+  // ---- A function with a placeholder and a test is filled in, in place.
+  const original = discount.document.getText();
+  discount.selection = new vscode.Selection(6, 2, 6, 2);
+  await vscode.commands.executeCommand("worsley.fillFunction");
+  await idle();
+  const filled = lastUser();
+  assert.deepEqual([filled?.mode, filled?.text, filled?.context], ["fill", "function discounted(price, percent) {", ["discount.js:3-8", "discount.spec.js:6-8"]]);
+  assert.equal(
+    discount.document.getText(),
+    original.replace("function discounted(price, percent) {\n  // TODO\n}", "function discounted(price, percent) {\n  return price * (1 - percent / 100);\n}"),
+    `the body took the placeholder's place, and the doc comment stayed: ${notices().join(" | ")}`,
+  );
+  assert.equal(notices().at(-1), "Filled in discounted in discount.js, at lines 3-8. Undo in the editor brings back what was there.");
+  await vscode.window.showTextDocument(discount.document);
+  await vscode.commands.executeCommand("undo");
+  assert.equal(discount.document.getText(), original, "undo brings the placeholder back");
 
   await config.update("level", undefined, vscode.ConfigurationTarget.Workspace);
-  await waitFor("the panel to hear of level 2", () => posted.some((m) => m.type === "level" && m.level === 2 && m.features.length === 6));
+  await waitFor("the panel to hear of level N", () => posted.some((m) => m.type === "level" && m.level === "N" && m.features.length === 8));
 }

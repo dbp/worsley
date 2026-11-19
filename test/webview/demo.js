@@ -1,7 +1,9 @@
 // Plays a thread into the panel, standing in for the extension. Choose it
-// with ?scene=ask|change|uncommitted|tour|syntax|empty, ?theme=light for the
-// light theme, and ?level=1 for the panel at level 1 (the syntax scene's
-// default), where it offers only Explain line and Translate.
+// with ?scene=ask|change|uncommitted|tour|syntax|functions|empty, ?theme=light
+// for the light theme, and ?level=1|2|N for the panel at that level: 1 (the
+// syntax scene's default) offers only Explain line and Translate, 2 (the
+// functions scene's) Check function and Fill in function besides, and N
+// everything.
 "use strict";
 
 (() => {
@@ -10,9 +12,10 @@
     document.documentElement.classList.add("light");
   }
   const scene = params.get("scene") ?? "ask";
-  const level = Number(params.get("level") ?? (scene === "syntax" ? 1 : 2));
-  const features = level === 1 ? ["explain", "translate"] : ["explain", "translate", "ask", "change", "tour", "review"];
-  const files = ["src/shop/cart.py", "src/shop/pricing.py", "src/shop/cli.py", "tests/test_cart.py", "README.md"];
+  const level = params.get("level") ?? (scene === "syntax" ? "1" : scene === "functions" ? "2" : "N");
+  const byLevel = { 1: ["explain", "translate"], 2: ["explain", "translate", "check", "fill"] };
+  const features = byLevel[level] ?? ["explain", "translate", "check", "fill", "ask", "change", "tour", "review"];
+  const files = ["src/shop/cart.py", "src/shop/pricing.py", "src/shop/cli.py", "tests/test_cart.py", "README.md", "shipping.py", "test_shipping.py", "stats.py", "test_stats.py"];
   const post = (message) => window.postMessage(message, "*");
   const sent = [];
   window.worsleySent = sent;
@@ -165,8 +168,37 @@
     { kind: "notice", id: "s5", level: "info", text: "Put the translation in stats.py, at lines 20-25, in place of your lines. Undo in the editor brings them back." },
   ];
 
+  const functions = [
+    { kind: "user", id: "f1", mode: "check", text: "def shipping_cost(weight):", context: ["shipping.py:4-8", "test_shipping.py:3-5"] },
+    {
+      kind: "assistant",
+      id: "f2",
+      reasoning: "",
+      streaming: false,
+      text:
+        "**They don't fit.**\n\n" +
+        "The docstring promises 2 per kilogram, but [a parcel over 20 kg costs a flat 50](shipping.py#L6-L7), which neither it nor [the tests](test_shipping.py#L3-L5) mention: they try 3 kg and 10 kg only.",
+      stats: "2.3s · 118 generated · 64.0 tok/s",
+    },
+    { kind: "user", id: "f3", mode: "fill", text: "def average(numbers):", context: ["stats.py:1-3", "test_stats.py:4-5"] },
+    {
+      kind: "assistant",
+      id: "f4",
+      reasoning: "",
+      streaming: false,
+      text: '```python\ndef average(numbers):\n    """Return the mean of numbers."""\n    return sum(numbers) / len(numbers)\n```\nNothing says what an empty list gives: as written, it raises `ZeroDivisionError`.',
+      stats: "1.4s · 52 generated · 61.5 tok/s",
+    },
+    { kind: "notice", id: "f5", level: "info", text: "Filled in average in stats.py, at lines 1-3. Undo in the editor brings back what was there." },
+  ];
+
   function play() {
-    post({ type: "level", level, features });
+    post({ type: "level", level: level === "N" ? "N" : Number(level), features });
+    if (scene === "functions") {
+      post({ type: "backend", label: "deepseek/deepseek-v4.1-flash-1017 · openrouter", tooltip: "https://openrouter.ai/api/v1" });
+      post({ type: "reset", items: functions, tour: undefined, busy: false, status: "" });
+      return;
+    }
     post({ type: "backend", label: "Qwen3.6-35B-A3B-Q4_K_M · local", tooltip: "http://127.0.0.1:8080/v1" });
     if (scene === "empty") {
       post({ type: "reset", items: [], tour: undefined, busy: false, status: "" });

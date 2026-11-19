@@ -221,7 +221,9 @@ kbd {
 }
 
 .item.user.explain,
-.item.user.translate {
+.item.user.translate,
+.item.user.check,
+.item.user.fill {
   border-left-color: var(--link);
 }
 

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { runTests } from "@vscode/test-electron";
 import { TOUR_REQUEST } from "../../src/core/prompts";
-import { EXPLAIN_SYSTEM, explainRequest, TRANSLATE_SYSTEM } from "../../src/core/standalone";
+import { CHECK_SYSTEM, EXPLAIN_SYSTEM, explainRequest, FILL_SYSTEM, TRANSLATE_SYSTEM } from "../../src/core/standalone";
 import { lastOf, startFakeModel, type ChatRequest, type FakeReply } from "../fakeModel";
 
 /**
@@ -61,7 +61,44 @@ export const FILES: Record<string, string> = {
     "module.exports = { shipping };",
     "",
   ].join("\n"),
+  // Functions waiting for their bodies, for Fill In at level 2: one has tests, in
+  // spec/, where `node --test` doesn't look; the other has none.
+  "src/discount.js": [
+    '"use strict";',
+    "",
+    "/**",
+    " * The price after taking off `percent` percent.",
+    " */",
+    "function discounted(price, percent) {",
+    "  // TODO",
+    "}",
+    "",
+    "/**",
+    " * The price with tax at `rate` added.",
+    " */",
+    "function taxed(price, rate) {",
+    "  // TODO",
+    "}",
+    "",
+    "module.exports = { discounted, taxed };",
+    "",
+  ].join("\n"),
+  "spec/discount.spec.js": [
+    '"use strict";',
+    'const test = require("node:test");',
+    'const assert = require("node:assert/strict");',
+    'const { discounted } = require("../src/discount");',
+    "",
+    'test("discounted takes the percentage off", () => {',
+    "  assert.equal(discounted(200, 25), 150);",
+    "});",
+    "",
+  ].join("\n"),
 };
+
+/** The function Fill In is sent, without line numbers, and what the fake model writes for it. */
+const DISCOUNTED = "/**\n * The price after taking off `percent` percent.\n */\nfunction discounted(price, percent) {\n  // TODO\n}";
+const DISCOUNTED_FILLED = "/**\n * The price after taking off `percent` percent.\n */\nfunction discounted(price, percent) {\n  return price * (1 - percent / 100);\n}";
 
 /** What the fake model is sent to translate from src/shipping.js, without the indentation its lines share. */
 const SHIPPING_STEPS = "set cost to 5\nif order's weight is more than 10\n  add 2 to cost\nmake it cheaper for members\nreturn cost";
@@ -77,6 +114,19 @@ async function respondStandalone(request: ChatRequest, system: string, user: str
   if (system === EXPLAIN_SYSTEM) {
     const expected = explainRequest("module.exports = { shipping };", "JavaScript");
     return { content: user === expected ? "`module.exports` is what another file gets when it `require`s this one." : `Explained the wrong thing: ${user}` };
+  }
+  if (system === CHECK_SYSTEM) {
+    // total, as the Change earlier left it, numbered, and the test it added.
+    const sent = ['<code path="src/cart.js" lines="3-5">\n3\tfunction total(items, discount = 0) {', "assert.equal(total([{ price: 10 }], 0.25), 7.5);", '<code path="test/cart.test.js"'];
+    const missing = sent.filter((part) => !user.includes(part));
+    return { content: missing.length === 0 ? "**They fit.**\n\n[total](src/cart.js#L3-L5) does what its tests expect." : `Checked the wrong thing, without ${missing.join(" and ")}: ${user}` };
+  }
+  if (system === FILL_SYSTEM) {
+    const sent = [`The function to fill in, in JavaScript, indenting with 2 spaces:\n<code path="src/discount.js" lines="3-8">\n${DISCOUNTED}\n</code>`, '<code path="spec/discount.spec.js"', "assert.equal(discounted(200, 25), 150);"];
+    const missing = sent.filter((part) => !user.includes(part));
+    return {
+      content: missing.length === 0 ? `\`\`\`javascript\n${DISCOUNTED_FILLED}\n\`\`\`\nNothing says what a percentage over 100 does: the price goes below zero.` : `Filled in the wrong thing, without ${missing.join(" and ")}: ${user}`,
+    };
   }
   if (!user.includes(`<pseudocode>\n${SHIPPING_STEPS}\n</pseudocode>`) || !user.includes("to translate into JavaScript")) {
     return { content: `Translated the wrong thing: ${user}` };
@@ -107,7 +157,7 @@ function round(request: ChatRequest): number {
 async function respond(request: ChatRequest): Promise<FakeReply> {
   const user = lastOf(request, "user");
   const system = request.messages[0]?.content ?? "";
-  if (system === EXPLAIN_SYSTEM || system === TRANSLATE_SYSTEM) {
+  if ([EXPLAIN_SYSTEM, TRANSLATE_SYSTEM, CHECK_SYSTEM, FILL_SYSTEM].includes(system)) {
     return respondStandalone(request, system, user);
   }
   const n = round(request);

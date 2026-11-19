@@ -55,13 +55,18 @@ elsewhere, such as llama.cpp or vLLM on another machine.
 
 For a course, Worsley can offer less at first, and more as the course goes
 on. `worsley.level` says how much: each level offers what the one below it
-does, and more. A course sets it for a workspace, in the
-`.vscode/settings.json` of the project its students start from. The menus,
-keybindings, command palette and panel show only what the level offers.
+does, and more. Levels 1 and 2 are numbered; level N, the last and the
+default, has everything else, and leaves room for levels 3, 4 and so on
+before it, as a course finds it needs them. A course sets the level for a
+workspace, in the `.vscode/settings.json` of the project its students start
+from. The menus, keybindings, command palette and panel show only what the
+level offers.
 
-- **Level 1** offers two requests that teach how code is written. Each
-  stands alone: the model sees only the code it is about, not the rest of
-  the file, nor the thread, and has no tools.
+The numbered levels' requests each stand alone: the model sees only the
+code a request is about, not the rest of the file, nor the thread, and has
+no tools.
+
+- **Level 1** offers two requests that teach how code is written.
   - **Explain a line.** Put the cursor on a line and press `Ctrl+Alt+X`
     (`⌘⌥X`), or *Explain line* in the panel. The line is explained on its
     own, part by part, as its language writes it: on its own, it can't be
@@ -79,7 +84,31 @@ keybindings, command palette and panel show only what the level offers.
     high"), is to stay as you wrote it, with the reply saying what it would
     need to be a step. How well a model keeps to this varies, and
     `pnpm run live:translate` measures it (see Layout).
-- **Level 2**, the default, offers everything else as well.
+- **Level 2** works on whole functions: reading one against what it is
+  meant to do, and writing one from that. Both see the function, with the
+  comments or decorators above it, and the tests that call it: test
+  functions, or lines of tests such as an `assert` at the end of a file,
+  that the language server's references or a search for calls by name find.
+  - **Check a function.** Put the cursor in a function and choose **Check
+    This Function** (*Check function* in the panel). It is read against its
+    docstring and its tests, starting with a verdict, **They fit.** or
+    **They don't fit.**, then each thing that doesn't: the code doing other
+    than the docstring says, a test expecting what the code doesn't do, a
+    test and the docstring disagreeing, or behaviour one has that the others
+    leave out, such as a special case or an error, each linked to the lines
+    on both sides. Nothing is changed.
+  - **Fill in a function.** Write a function's header, its docstring and
+    tests that call it, with a placeholder such as `pass` for the body, then
+    choose **Fill In This Function** (*Fill in function*). The body is
+    written to do what the docstring and tests say and nothing more, and put
+    in place of the placeholder, which undo brings back; the reply says what
+    they leave open, such as an empty list no test has. Where they
+    contradict each other, or say too little to write it from, nothing is
+    written, and the reply says why. A function with a body already, or with
+    no tests, isn't filled in. The tests can start as pseudocode, made code
+    with Translate. `pnpm run live:functions` measures both requests.
+- **Level N**, the default, offers everything else as well: asking, changing,
+  tours and reviews.
 
 ## Trying it
 
@@ -124,7 +153,7 @@ backend; the thread carries on with whichever model answers next.
 | --- | --- |
 | `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, the environment variable holding its key (a backend that names one is used only with a key; any other is sent one only if **Worsley: Set API Key…** has stored it), `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`, and `contextTokens`, the model's context window, for a server that doesn't report it. User settings only, so a workspace can't send your code elsewhere. |
 | `worsley.backend` | Which of them is in use. |
-| `worsley.level` | How much of Worsley there is (see Levels): 1, explaining a line and translating pseudocode; 2, everything (the default). |
+| `worsley.level` | How much of Worsley there is (see Levels): 1, explaining a line and translating pseudocode; 2, checking and filling in functions as well; `"N"`, everything (the default). A number with no level of its own yet is the highest numbered level below it. |
 | `worsley.testCommand` | The workspace's test command, such as `pytest -q`. It runs without asking. Empty: the model works out how the tests run, and each command needs approval. |
 | `worsley.commandTimeoutSeconds` | When a command is stopped (600). |
 | `worsley.context.maxFileLines` | Visible files up to this long are sent whole (600); longer ones as the lines on screen and 40 either side. |
@@ -145,6 +174,21 @@ thread reaches them. A translation goes in only where the code was, if the
 file hasn't changed while the model worked; otherwise it is in the panel to
 copy. A reply without code, or whose code is what was there already, leaves
 the file alone.
+
+Checking and filling in a function are the same kind of request, about a
+function and its tests. The function is the innermost one with a name of its
+own around the cursor, in the outline the language server gives (a callback
+counts as part of the function it is in), or else found by Python's
+indentation, or else the lines selected; with it go the comments and
+decorators just above it. Its tests are found from the language server's
+references to it, and a search for calls of it by name, for a file without
+one: each test function such a call is in (a function named like a test,
+or any function in a file named like one, `test_*.py` or `*.test.js`, or a
+callback a test framework is given), or else the line itself, if it tests
+something outside any function, up to 300 lines of them. The panel lists
+where each came from. A filled-in function goes in only if every line of it
+but the placeholder comes back as it was, so that its header and docstring
+are the student's.
 
 Each message is a request in *Ask* or *Change* mode, with an
 `<editor_context>` block: the visible files in the workspace folder, which
@@ -237,8 +281,9 @@ when they name one. A link to a folder reveals it in the Explorer.
   keeping a thread inside the model's window (`compact.ts`) and between
   windows (`saved.ts`), the editor
   context (`context.ts`), links (`links.ts`, shared with the panel), the
-  prompts (`prompts.ts`), the levels (`levels.ts`), and level 1's requests
-  that stand alone (`standalone.ts`).
+  prompts (`prompts.ts`), the levels (`levels.ts`), the numbered levels'
+  requests that stand alone (`standalone.ts`), and finding a function, its
+  documentation and its tests for level 2 (`functions.ts`).
 - `src/editor/`: the VS Code side: the thread (`session.ts`), the panel's
   host (`panel.ts`), the workspace with its language servers
   (`workspace.ts`), the editor as the context sees it (`editorTracker.ts`),
@@ -255,9 +300,12 @@ when they name one. A link to a folder reveals it in the Explorer.
   references and a list of locations; link checks; a change with two edits
   and the tests; a review of those changes, of one file and of all; a change
   held back by uncommitted ones, cancelled and then sent anyway; a command that needs approval; a two-step tour of the
-  structure; the thread kept for the next window; and level 1, where Ask
-  and tours are refused, a line is explained, and pseudocode is translated
-  in place, undone, and left alone when the file changes meanwhile.
+  structure; the thread kept for the next window; level 1, where Ask and
+  tours are refused, a line is explained, and pseudocode is translated in
+  place, undone, and left alone when the file changes meanwhile; and level
+  2, where a function is checked against the tests the language server
+  finds, and one is filled in, keeping its doc comment, while one with a
+  body, or with no tests, is left alone.
 - `test/live/`: one request against a real model from the command line, with
   the same prompts and tools but no language servers (`run.ts`, which can
   send a selection and report times, tokens and broken links as JSON), and
@@ -267,7 +315,11 @@ when they name one. A link to a folder reveals it in the Explorer.
   keep, or input that mustn't become a number, each translated several
   times. Every translation is checked for names, numbers, strings and
   comments that aren't in the pseudocode (`details.ts`), and for what its
-  case expects.
+  case expects. Level 2 is measured too (`functions.ts`), in Python: checks
+  of functions that fit their docstrings and tests, and of functions with
+  something planted that doesn't, for the verdict and links to where it is;
+  and bodies filled in, whose tests are run with `python3`, besides cases
+  where nothing should be written.
 - `test/webview/`: the panel in a browser, with a stand-in for VS Code and a
   few demo threads, for working on how it looks.
 
@@ -284,7 +336,8 @@ pnpm run live -- --root samples/shop --mode change --test-command "python3 -m un
 node out/test/live/suite.js --out live-results --model ID   # six tasks on one model, checked
 node out/test/live/suite.js --out live-results --summary    # a table of every model run so far
 pnpm run live:translate -- --base-url https://openrouter.ai/api/v1 --model ID --key-env OPENROUTER_API_KEY --extra '{}' --runs 3
-node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|syntax|empty, &theme=light, &level=1
+pnpm run live:functions -- --base-url https://openrouter.ai/api/v1 --model ID --key-env OPENROUTER_API_KEY --extra '{}' --runs 3
+node test/webview/serve.mjs # then http://127.0.0.1:7811/?scene=ask|change|uncommitted|tour|syntax|functions|empty, &theme=light, &level=1|2|N
 uv run scripts/icon-font.py # media/worsley.ttf, the status bar's sextant, from media/worsley.svg
 ```
 
@@ -293,9 +346,11 @@ into `.vscode-test/`. `WORSLEY_TEST_VSCODE` picks another: a version such as
 `stable`, or an installed VS Code's binary, such as `/usr/share/code/code`.
 `pnpm run live -- --help` lists its options; `--steps` explains a tour's
 steps one after another, and `--base-url`, `--model` and `--key-env` point
-it at OpenRouter. `live:translate` takes the same, `--cases` to run only
-some, and `--show` to print each reply; it ends with a table of how many
-translations of each case passed, and how many added nothing to the
+it at OpenRouter. `live:translate` and `live:functions` take the same,
+`--cases` to run only some, `--parallel N` to send that many requests at
+once, for a server that takes them, and `--show` to print each reply. Each
+ends with a table of how many replies to each case passed;
+`live:translate`'s also says how many translations added nothing to the
 pseudocode.
 
 ## Not yet

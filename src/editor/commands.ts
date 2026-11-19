@@ -44,6 +44,14 @@ export function registerCommands(
     await panel.reveal();
     await session.translate();
   });
+  register("worsley.checkFunction", async () => {
+    await panel.reveal();
+    await session.checkFunction();
+  });
+  register("worsley.fillFunction", async () => {
+    await panel.reveal();
+    await session.fillFunction();
+  });
   register("worsley.tour", async () => {
     await panel.focus("ask");
     await session.send(TOUR_REQUEST, "ask", undefined, "tour");

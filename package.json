@@ -62,6 +62,18 @@
         "icon": "$(arrow-swap)"
       },
       {
+        "command": "worsley.checkFunction",
+        "title": "Check This Function",
+        "category": "Worsley",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "worsley.fillFunction",
+        "title": "Fill In This Function",
+        "category": "Worsley",
+        "icon": "$(wand)"
+      },
+      {
         "command": "worsley.tour",
         "title": "Tour the Codebase",
         "category": "Worsley",
@@ -157,6 +169,16 @@
           "command": "worsley.translate",
           "when": "worsley.feature.translate",
           "group": "worsley@4"
+        },
+        {
+          "command": "worsley.checkFunction",
+          "when": "worsley.feature.check",
+          "group": "worsley@5"
+        },
+        {
+          "command": "worsley.fillFunction",
+          "when": "worsley.feature.fill",
+          "group": "worsley@6"
         }
       ],
       "view/title": [
@@ -212,6 +234,14 @@
         {
           "command": "worsley.translate",
           "when": "worsley.feature.translate"
+        },
+        {
+          "command": "worsley.checkFunction",
+          "when": "worsley.feature.check"
+        },
+        {
+          "command": "worsley.fillFunction",
+          "when": "worsley.feature.fill"
         },
         {
           "command": "worsley.tour",
@@ -364,21 +394,27 @@
           "markdownDescription": "The `name` of the entry in `#worsley.backends#` to use. **Worsley: Choose Model…** changes it."
         },
         "worsley.level": {
-          "type": "number",
+          "type": [
+            "number",
+            "string"
+          ],
           "enum": [
             1,
-            2
+            2,
+            "N"
           ],
           "enumItemLabels": [
             "1: Syntax",
-            "2: Everything"
+            "2: Functions",
+            "N: Everything"
           ],
           "markdownEnumDescriptions": [
-            "**Explain This Line**, which explains one line of code on its own, and **Translate Into Code**, which turns pseudocode into code without adding to it. The model sees only that line, or those lines.",
-            "Everything: asking about the code, changing it, tours and reviews, besides what level 1 offers."
+            "**Explain This Line**, which explains one line of code on its own, and **Translate Into Code**, which turns pseudocode into code without adding to it.",
+            "Level 1, with **Check This Function**, which reads a function against its docstring and the tests that call it, and **Fill In This Function**, which writes its body from them.",
+            "Everything: asking about the code, changing it, tours and reviews, besides what the numbered levels offer."
           ],
-          "default": 2,
-          "markdownDescription": "How much of Worsley there is, for a course that brings it in a little at a time. Each level offers what the one below it does, and more. A course can set it for a workspace, in the `.vscode/settings.json` of the project its students start from."
+          "default": "N",
+          "markdownDescription": "How much of Worsley there is, for a course that brings it in a little at a time. Each level offers what the one below it does, and more; level N, the last, offers everything, and leaves room for numbered levels before it. A course can set it for a workspace, in the `.vscode/settings.json` of the project its students start from."
         },
         "worsley.testCommand": {
           "type": "string",
@@ -416,7 +452,8 @@
     "test": "node esbuild.config.mjs --tests && node --test \"out/test/unit/*.test.js\"",
     "test:integration": "node esbuild.config.mjs && node esbuild.config.mjs --tests && node out/test/integration/run.js",
     "live": "node esbuild.config.mjs --tests && node out/test/live/run.js",
-    "live:translate": "node esbuild.config.mjs --tests && node out/test/live/translations.js"
+    "live:translate": "node esbuild.config.mjs --tests && node out/test/live/translations.js",
+    "live:functions": "node esbuild.config.mjs --tests && node out/test/live/functions.js"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

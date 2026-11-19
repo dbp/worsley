@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { bareKey, mergeBodies, type Endpoint } from "../core/chat";
-import { clampLevel, featuresAt, TOP_LEVEL } from "../core/levels";
+import { featuresAt, levelOf, type LevelName } from "../core/levels";
 import type { Feature, Mode } from "../protocol";
 
 /** An entry of `worsley.backends`: one OpenAI-compatible endpoint and the model to use there. */
@@ -140,10 +140,9 @@ export function maxToolRounds(): number {
   return Math.max(1, config().get<number>("maxToolRounds") ?? 60);
 }
 
-/** The level Worsley is at, `worsley.level`: the top, with everything, unless a course says otherwise. */
-export function level(): number {
-  const value = config().get<number>("level");
-  return typeof value === "number" ? clampLevel(value) : TOP_LEVEL;
+/** The level Worsley is at, `worsley.level`: level N, with everything, unless a course says otherwise. */
+export function level(): LevelName {
+  return levelOf(config().get<unknown>("level"));
 }
 
 /** What Worsley offers at its level. */

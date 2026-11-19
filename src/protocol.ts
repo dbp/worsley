@@ -13,9 +13,10 @@ export type Mode = "ask" | "change";
 /**
  * Requests that stand alone, outside the thread: the model sees only the
  * code they are about. `explain` explains one line; `translate` turns the
- * student's pseudocode into code.
+ * student's pseudocode into code; `check` compares a function with its
+ * documentation and tests; `fill` writes a function's body from them.
  */
-export type Standalone = "explain" | "translate";
+export type Standalone = "explain" | "translate" | "check" | "fill";
 
 /** What a user's message in the thread asked for. */
 export type Request = Mode | Standalone;
@@ -129,7 +130,7 @@ export type HostMessage =
   | { type: "links"; id: string; statuses: Record<string, LinkStatus> }
   | { type: "focus"; mode?: Mode; text?: string }
   /** What Worsley offers at its level, which the panel shows and nothing else. */
-  | { type: "level"; level: number; features: Feature[] };
+  | { type: "level"; level: number | "N"; features: Feature[] };
 
 export type PanelMessage =
   | { type: "ready" }

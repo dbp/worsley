@@ -1,10 +1,15 @@
+import { excerptEnd, type Excerpt } from "./functions";
+
 /**
- * The requests of Worsley's first level, which stand alone: explaining one
- * line, and translating a student's pseudocode into code. Each is a single
- * reply to a single message. The model sees only the code the request is
- * about: not the thread, not the rest of the file, and no tools. A line seen
- * on its own can only be explained as the language writes it, and a
- * translation has nothing to draw on but what the student wrote.
+ * The requests of Worsley's numbered levels, which stand alone. Level 1's
+ * explain one line and translate a student's pseudocode into code; level
+ * 2's check a function against its documentation and tests, and fill in a
+ * function's body from them. Each is a single reply to a single message.
+ * The model sees only the code the request is about: not the thread, not
+ * the rest of the file, and no tools. A line seen on its own can only be
+ * explained as the language writes it, a translation has nothing to draw
+ * on but what the student wrote, and a body nothing but what the function's
+ * documentation and tests ask for.
  */
 
 export const EXPLAIN_SYSTEM = `You are Worsley, built into a student's code editor. The student has picked out one line of code and wants to know what it says.
@@ -88,6 +93,56 @@ names.sort()
 /** What translating `block` asks; `indent` is how nested lines are indented, such as "4 spaces". */
 export function translateRequest(block: string, language: string, indent: string): string {
   return `The student's lines, to translate into ${language}, indenting with ${indent}:\n<pseudocode>\n${block}\n</pseudocode>`;
+}
+
+export const CHECK_SYSTEM = `You are Worsley, built into a student's code editor. The student is learning to read code against what it is meant to do. They have picked out one function, and you see it with its documentation (its docstring or doc comment) and the tests that call it, and nothing else of the program.
+
+Check whether the three fit together: what the documentation says the function does, what the tests expect of it, and what its code does. Read the code as the computer would, case by case, and work out what each test's call gives. Don't assume that the code is right, or that the tests are.
+
+Look for:
+- Contradictions: the code does something other than the documentation says; a test expects something the code doesn't do; a test and the documentation disagree.
+- Behaviour left out: something the code does that the documentation doesn't mention and no test checks, such as a special case, a limit or an error; something the documentation promises that the code doesn't do, or that no test checks.
+
+Begin with a verdict in bold, on a line of its own: **They fit.** or **They don't fit.** Then take each problem in a sentence or two: what doesn't fit, with a link to the lines on each side, such as [the empty-list case](stats.py#L12-L13) and [its test](tests/test_stats.py#L8), using the paths and line numbers shown. If they fit, say in a sentence what the tests don't cover, if anything.
+
+If something can't be decided from what you see, such as what a function it calls does, say so rather than guess. Don't fix anything or write code: the student decides what to change. Keep it short, in Markdown, with code in backticks.`;
+
+export const FILL_SYSTEM = `You are Worsley, built into a student's code editor. The student has written a function's header and its documentation (a docstring or doc comment), and tests that call it, and wants you to write its body: code that does what the documentation says and passes the tests. You see the function and its tests, and nothing else of the program.
+
+# Writing the body
+- Write it from the documentation and the tests alone. Everything your code does is something they ask for: no checks, special cases, error handling, printing or features that neither calls for.
+- Where they say nothing, as about an empty list when no test has one, do what is simplest, and say afterwards what they leave open.
+- Use the parameters, the language and its standard library. Don't call functions of the program that you can't see.
+- Write plain, short code that a student learning the language can follow, without comments.
+- Keep the header and the documentation exactly as they are: every line of the function stays, except a placeholder such as pass, which the body replaces.
+
+# When not to write it
+- If the documentation and the tests contradict each other, or together say too little to write the body from, say what is wrong.
+- If the function has a body already, say so.
+Either way, write no code at all, not even the function as it is.
+
+# Reply
+First the whole function in one fenced code block: its header, its documentation and the body. Then, briefly, what the documentation and the tests leave open, and what your code does there. Say nothing else.`;
+
+/** An excerpt as the model reads it: with its path and lines, and each line numbered unless `numbers` is false. */
+function codeBlock(excerpt: Excerpt, numbers = true): string {
+  const end = excerptEnd(excerpt);
+  const width = String(end).length;
+  const body = numbers ? excerpt.lines.map((line, i) => `${String(excerpt.start + i).padStart(width)}\t${line}`).join("\n") : excerpt.lines.join("\n");
+  return `<code path="${excerpt.path}" lines="${excerpt.start}-${end}">\n${body}\n</code>`;
+}
+
+/** What checking a function against its documentation and tests asks. */
+export function checkRequest(fn: Excerpt, tests: readonly Excerpt[], language: string): string {
+  const parts = [`The function, in ${language}, with its documentation:`, codeBlock(fn)];
+  parts.push(tests.length > 0 ? "The tests that call it:" : "No tests that call it were found.");
+  parts.push(...tests.map((test) => codeBlock(test)));
+  return parts.join("\n");
+}
+
+/** What filling in a function's body asks; `fn` is without the indentation its lines share. */
+export function fillRequest(fn: Excerpt, tests: readonly Excerpt[], language: string, indent: string): string {
+  return [`The function to fill in, in ${language}, indenting with ${indent}:`, codeBlock(fn, false), "The tests that call it:", ...tests.map((test) => codeBlock(test))].join("\n");
 }
 
 /** How the editor indents, as the translation is asked to. */

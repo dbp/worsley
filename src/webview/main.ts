@@ -46,17 +46,14 @@ const thread = h("main", { id: "thread", tabindex: "-1" });
 const empty = h("div", { id: "empty" });
 thread.append(empty);
 // The requests that stand alone, about what the editor has selected.
-const standaloneButtons = (["explain", "translate"] as const).map((request) =>
-  h(
-    "button",
-    {
-      className: "secondary",
-      "data-action": "standalone",
-      "data-request": request,
-      title: request === "explain" ? `Explain the line the cursor is on, on its own (${keys("X")})` : "Translate the selected pseudocode into code, in the file's language",
-    },
-    request === "explain" ? "Explain line" : "Translate",
-  ),
+const STANDALONE_BUTTONS: Record<Standalone, [label: string, title: string]> = {
+  explain: ["Explain line", `Explain the line the cursor is on, on its own (${keys("X")})`],
+  translate: ["Translate", "Translate the selected pseudocode into code, in the file's language"],
+  check: ["Check function", "Check the function the cursor is in against its documentation and the tests that call it"],
+  fill: ["Fill in function", "Write the body of the function the cursor is in, from its documentation and the tests that call it"],
+};
+const standaloneButtons = (["explain", "translate", "check", "fill"] as const).map((request) =>
+  h("button", { className: "secondary", "data-action": "standalone", "data-request": request, title: STANDALONE_BUTTONS[request][1] }, STANDALONE_BUTTONS[request][0]),
 );
 const standaloneRow = h("div", { id: "standalone" }, ...standaloneButtons);
 const chipsRow = h("div", { id: "chips" });
@@ -83,7 +80,7 @@ app.append(tourBar, thread, composer);
 let busy = false;
 let mode: Mode = "ask";
 /** What Worsley's level offers: everything, until the extension says. */
-let features = new Set<Feature>(["explain", "translate", "ask", "change", "tour", "review"]);
+let features = new Set<Feature>(["explain", "translate", "check", "fill", "ask", "change", "tour", "review"]);
 let chipCount = 0;
 let tour: TourView | undefined;
 const items = new Map<string, Item>();
@@ -133,13 +130,13 @@ function copyButton(text: string): HTMLButtonElement {
   return h("button", { className: "link-button copy", "data-action": "copy", "data-copy": text, title: "Copy this to the clipboard" }, "Copy");
 }
 
-const REQUEST_LABELS: Record<Request, string> = { ask: "Ask", change: "Change", explain: "Explain", translate: "Translate" };
+const REQUEST_LABELS: Record<Request, string> = { ask: "Ask", change: "Change", explain: "Explain", translate: "Translate", check: "Check", fill: "Fill in" };
 
 function draw(item: Item): HTMLElement {
   switch (item.kind) {
     case "user": {
-      // A request that stands alone shows the code it is about.
-      const code = item.mode === "explain" || item.mode === "translate";
+      // A request that stands alone shows the code it is about: a line, the pseudocode, or a function's header.
+      const code = item.mode !== "ask" && item.mode !== "change";
       return h(
         "div",
         { className: `item user ${item.mode}` },
@@ -455,7 +452,7 @@ function offeredModes(): Mode[] {
 function drawEmpty(): void {
   const paragraphs: Child[] = [];
   const modes = offeredModes();
-  const standalone = features.has("explain") || features.has("translate");
+  const standalone = features.has("explain") || features.has("translate") || features.has("check") || features.has("fill");
   if (modes.length > 0) {
     paragraphs.push(h("p", { className: "empty-title" }, "Read the code, with help."));
     const how: Child[] = ["Select some code and press "];
@@ -501,6 +498,28 @@ function drawEmpty(): void {
         "Write the steps of a program in your own words, select them and press ",
         h("em", {}, "Translate"),
         ": Worsley writes them in the file's language, adding nothing of its own. A line that asks for code, rather than saying what to do, stays as you wrote it.",
+      ),
+    );
+  }
+  if (features.has("check")) {
+    paragraphs.push(
+      h(
+        "p",
+        {},
+        "Put the cursor in a function and press ",
+        h("em", {}, "Check function"),
+        ": Worsley reads its code against its docstring and the tests that call it, and says where they don't fit.",
+      ),
+    );
+  }
+  if (features.has("fill")) {
+    paragraphs.push(
+      h(
+        "p",
+        {},
+        "Write a function's header, its docstring and tests that call it, then press ",
+        h("em", {}, "Fill in function"),
+        ": Worsley writes a body that does what they say, and nothing more. The tests can start as pseudocode, translated.",
       ),
     );
   }

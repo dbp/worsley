@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clampLevel, featuresAt, LEVELS, notAtLevel, TOP_LEVEL } from "../../src/core/levels";
 import {
+  docStart,
+  functionAt,
+  functionName,
+  hasBody,
+  isTestLine,
+  isTestName,
+  isTestPath,
+  keepsLines,
+  mergeRanges,
+  pythonFunctionAt,
+  testAround,
+  type Excerpt,
+} from "../../src/core/functions";
+import { featuresAt, LEVEL_N, levelOf, notAtLevel, NUMBERED, type LevelName } from "../../src/core/levels";
+import {
+  CHECK_SYSTEM,
+  checkRequest,
   codeIn,
   dedent,
   explainRequest,
+  fillRequest,
   indentUnit,
   languageName,
   reindent,
@@ -12,33 +29,42 @@ import {
   TRANSLATE_SYSTEM,
   translateRequest,
 } from "../../src/core/standalone";
+import type { OutlineEntry } from "../../src/core/tools";
 import { addedDetails } from "../live/details";
 
 describe("the levels", () => {
-  it("start with explaining a line and translating, and end with everything", () => {
+  it("are 1, explaining and translating; 2, checking and filling in functions; and N, everything", () => {
     assert.deepEqual([...featuresAt(1)].sort(), ["explain", "translate"]);
-    assert.deepEqual([...featuresAt(TOP_LEVEL)].sort(), ["ask", "change", "explain", "review", "tour", "translate"]);
+    assert.deepEqual([...featuresAt(2)].sort(), ["check", "explain", "fill", "translate"]);
+    assert.deepEqual([...featuresAt("N")].sort(), ["ask", "change", "check", "explain", "fill", "review", "tour", "translate"]);
   });
 
   it("each offer what the one below offers, and more", () => {
-    for (let level = 2; level <= TOP_LEVEL; level++) {
-      const below = featuresAt(level - 1);
+    const order: LevelName[] = [...NUMBERED.map((_, i) => i + 1), "N"];
+    for (const [i, level] of order.entries()) {
+      const below = i === 0 ? new Set() : featuresAt(order[i - 1] as LevelName);
       const here = featuresAt(level);
-      assert.ok([...below].every((f) => here.has(f)), `level ${level} keeps what level ${level - 1} offers`);
+      assert.ok([...below].every((f) => here.has(f as never)), `level ${level} keeps what the level below offers`);
       assert.ok(here.size > below.size, `level ${level} adds something`);
     }
-    assert.equal(new Set(LEVELS.flatMap((l) => l.adds)).size, LEVELS.flatMap((l) => l.adds).length, "no feature comes at two levels");
+    const all = [...NUMBERED, LEVEL_N].flatMap((l) => l.adds);
+    assert.equal(new Set(all).size, all.length, "no feature comes at two levels");
   });
 
-  it("are whole numbers from 1 to the top, the top unless a setting is a number", () => {
-    assert.equal(clampLevel(0), 1);
-    assert.equal(clampLevel(1.7), 1);
-    assert.equal(clampLevel(99), TOP_LEVEL);
-    assert.equal(clampLevel(Number.NaN), TOP_LEVEL);
+  it("are named by number, the nearest that exists, or by N, the default", () => {
+    assert.equal(levelOf(1), 1);
+    assert.equal(levelOf(2), 2);
+    assert.equal(levelOf(3), 2, "until there is a level 3");
+    assert.equal(levelOf(0), 1);
+    assert.equal(levelOf(1.7), 1);
+    assert.equal(levelOf("2"), 2);
+    assert.equal(levelOf("N"), "N");
+    assert.equal(levelOf(undefined), "N");
+    assert.equal(levelOf(Number.NaN), "N");
   });
 
   it("say what a level leaves out", () => {
-    assert.equal(notAtLevel("tour", 1), "Worsley is at level 1, which doesn't include tours.");
+    assert.equal(notAtLevel("tour", 2), "Worsley is at level 2, which doesn't include tours.");
   });
 });
 
@@ -153,5 +179,143 @@ describe("the measure of a translation", () => {
     const code = "int count = 0;\nfor (String word : words) {\n    if (word.length() > 5) {\n        count++;\n    }\n}\nSystem.out.println(count);";
     const original = "set count to 0\nfor each word in words\n    if word's length is more than 5\n        add 1 to count\nprint count";
     assert.deepEqual(addedDetails(code, original, "java"), { names: [], numbers: [], strings: [], comments: [] });
+  });
+});
+
+describe("finding a function and its tests", () => {
+  const outline: OutlineEntry[] = [
+    {
+      name: "Cart",
+      kind: "class",
+      start: 1,
+      end: 10,
+      children: [
+        { name: "__init__", kind: "method", start: 2, end: 3, children: [] },
+        { name: "total", kind: "method", start: 5, end: 10, children: [{ name: "price", kind: "function", start: 6, end: 7, children: [] }] },
+      ],
+    },
+    { name: "TAX", kind: "constant", start: 12, end: 12, children: [] },
+  ];
+
+  it("finds the innermost function or method around a line, from the outline", () => {
+    assert.equal(functionAt(outline, 6)?.name, "price");
+    assert.equal(functionAt(outline, 9)?.name, "total");
+    assert.equal(functionAt(outline, 4), undefined, "in the class, between its methods");
+    assert.equal(functionAt(outline, 12), undefined);
+  });
+
+  it("takes a callback as part of the function it is in, but a test framework's as a test", () => {
+    const js: OutlineEntry[] = [
+      { name: "total", kind: "function", start: 3, end: 5, children: [{ name: "reduce() callback", kind: "function", start: 4, end: 4, children: [] }] },
+      { name: 'test("total adds up") callback', kind: "function", start: 8, end: 10, children: [] },
+      { name: 'it("totals") callback', kind: "function", start: 12, end: 14, children: [] },
+    ];
+    assert.equal(functionAt(js, 4)?.name, "total");
+    assert.equal(functionAt(js, 9), undefined, "a test's callback is no function to check");
+    const lines = Array.from({ length: 14 }, () => "x");
+    assert.deepEqual(testAround(lines, js, "cart.test.js", 9), { path: "cart.test.js", start: 8, end: 10 });
+    assert.deepEqual(testAround(lines, js, "cart.js", 13), { path: "cart.js", start: 12, end: 14 });
+  });
+
+  it("finds a Python function by its indentation, without an outline", () => {
+    const lines = ["import math", "", "def area(r):", '    """The area."""', "", "    return math.pi * r ** 2", "", "x = area(2)"];
+    assert.deepEqual(pythonFunctionAt(lines, 6), { start: 3, end: 6, name: "area" });
+    assert.deepEqual(pythonFunctionAt(lines, 5), { start: 3, end: 6, name: "area" }, "a blank line inside it");
+    assert.deepEqual(pythonFunctionAt(lines, 3), { start: 3, end: 6, name: "area" });
+    assert.equal(pythonFunctionAt(lines, 8), undefined);
+    assert.deepEqual(pythonFunctionAt(["class Cart:", "    def total(self):", "        return 1"], 3), { start: 2, end: 3, name: "total" });
+  });
+
+  it("takes in the comments and decorators above a function", () => {
+    assert.equal(docStart(["x = 1", "", "/**", " * Adds.", " */", "function add(a, b) {", "}"], 6), 3);
+    assert.equal(docStart(["@cache", "def f():", "    pass"], 2), 1);
+    assert.equal(docStart(["x = 1", "def f():"], 2), 2);
+  });
+
+  it("knows a function's name from its header", () => {
+    assert.equal(functionName("def average(numbers):"), "average");
+    assert.equal(functionName("async def fetch(url):"), "fetch");
+    assert.equal(functionName("function total(items) {"), "total");
+    assert.equal(functionName("const total = (items) => {"), "total");
+    assert.equal(functionName("(define (area r)"), "area");
+    assert.equal(functionName("public static int total(int[] items) {"), "total");
+  });
+
+  it("knows tests by their files' names, their own names and their lines", () => {
+    for (const path of ["tests/test_cart.py", "test_cart.py", "cart_test.py", "src/cart.test.js", "spec/cart.spec.ts", "CartTest.java", "tests.py"]) {
+      assert.ok(isTestPath(path), path);
+    }
+    for (const path of ["cart.py", "src/contest.py", "latest.js", "attestation.py"]) {
+      assert.ok(!isTestPath(path), path);
+    }
+    assert.ok(isTestName("test_total") && isTestName("testTotal") && isTestName("TotalTest") && isTestName('test("total adds up") callback'));
+    assert.ok(!isTestName("latest") && !isTestName("contest"));
+    assert.ok(isTestLine("assert total([1]) == 1") && isTestLine("(check-expect (area 1) 3.14)") && !isTestLine("print(total([1]))"));
+  });
+
+  it("finds the test around a call: the test function it is in, or a line of tests", () => {
+    const lines = ["from cart import total", "", "def test_total():", "    assert total([1, 2]) == 3", "", "def helper():", "    return total([])", "", "assert total([]) == 0", "print(total([5]))"];
+    assert.deepEqual(testAround(lines, undefined, "checks.py", 4), { path: "checks.py", start: 3, end: 4 });
+    assert.equal(testAround(lines, undefined, "checks.py", 7), undefined, "a helper isn't a test");
+    assert.deepEqual(testAround(lines, undefined, "checks.py", 9), { path: "checks.py", start: 9, end: 9 });
+    assert.equal(testAround(lines, undefined, "checks.py", 10), undefined, "printing isn't testing");
+    // In a file of tests, every call is part of one.
+    assert.deepEqual(testAround(lines, undefined, "test_cart.py", 7), { path: "test_cart.py", start: 6, end: 7 });
+    assert.deepEqual(testAround(lines, undefined, "test_cart.py", 1), { path: "test_cart.py", start: 1, end: 1 });
+    // With an outline, its functions are the ones that count.
+    assert.deepEqual(testAround(lines, [{ name: "test_total", kind: "function", start: 3, end: 4, children: [] }], "checks.py", 4), { path: "checks.py", start: 3, end: 4 });
+  });
+
+  it("joins ranges of tests that overlap or touch", () => {
+    const ranges = [
+      { path: "b.py", start: 1, end: 2 },
+      { path: "a.py", start: 5, end: 9 },
+      { path: "a.py", start: 1, end: 3 },
+      { path: "a.py", start: 4, end: 4 },
+      { path: "a.py", start: 7, end: 12 },
+      { path: "a.py", start: 20, end: 21 },
+    ];
+    assert.deepEqual(mergeRanges(ranges), [
+      { path: "a.py", start: 1, end: 12 },
+      { path: "a.py", start: 20, end: 21 },
+      { path: "b.py", start: 1, end: 2 },
+    ]);
+  });
+
+  it("tells a function with a body from one waiting for one", () => {
+    assert.equal(hasBody(["def f(x):", '    """Twice x."""', "    pass"]), false);
+    assert.equal(hasBody(["def f(x):", '    """Twice x.', "", '    More."""', "    ..."]), false);
+    assert.equal(hasBody(["@cache", "def f(", "    x,", "):", "    # TODO", "    raise NotImplementedError"]), false);
+    assert.equal(hasBody(["def f(x):", '    """Twice x."""', "    return x * 2"]), true);
+    assert.equal(hasBody(["/**", " * Twice x.", " */", "function f(x) {", "  // TODO", "}"]), false);
+    assert.equal(hasBody(["function f(x) {", "  return x * 2;", "}"]), true);
+    assert.equal(hasBody(["function f(x) { return x * 2; }"]), true);
+  });
+
+  it("knows whether a function written from another kept all its lines but a placeholder", () => {
+    const before = ["def f(x):", '    """Twice x."""', "    pass"];
+    assert.ok(keepsLines(before, ["def f(x):", '    """Twice x."""', "    return x * 2"]));
+    assert.ok(!keepsLines(before, ["def f(x):", '    """Return twice x."""', "    return x * 2"]), "the docstring changed");
+    assert.ok(!keepsLines(before, ["def f(n):", '    """Twice x."""', "    return n * 2"]), "the header changed");
+    assert.ok(keepsLines(["function f(x) {", "  // TODO", "}"], ["function f(x) {", "  return x * 2;", "}"]));
+  });
+});
+
+describe("checking and filling in a function", () => {
+  const fn: Excerpt = { path: "stats.py", start: 3, lines: ["def average(numbers):", '    """The mean."""', "    pass"] };
+  const tests: Excerpt[] = [{ path: "tests/test_stats.py", start: 9, lines: ["def test_average():", "    assert average([2, 4]) == 3"] }];
+
+  it("shows a check the function and its tests, numbered, with their paths", () => {
+    const request = checkRequest(fn, tests, "Python");
+    assert.match(request, /^The function, in Python, with its documentation:\n<code path="stats.py" lines="3-5">\n3\tdef average\(numbers\):\n/);
+    assert.match(request, /\nThe tests that call it:\n<code path="tests\/test_stats.py" lines="9-10">\n 9\tdef test_average\(\):\n10\t {4}assert/);
+    assert.match(checkRequest(fn, [], "Python"), /\nNo tests that call it were found\.$/);
+    assert.match(CHECK_SYSTEM, /\*\*They fit\.\*\* or \*\*They don't fit\.\*\*/);
+  });
+
+  it("shows a fill the function as it is, and its tests numbered", () => {
+    const request = fillRequest(fn, tests, "Python", "4 spaces");
+    assert.match(request, /^The function to fill in, in Python, indenting with 4 spaces:\n<code path="stats.py" lines="3-5">\ndef average\(numbers\):\n/);
+    assert.match(request, /\n 9\tdef test_average\(\):/);
   });
 });
