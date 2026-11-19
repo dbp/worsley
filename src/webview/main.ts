@@ -53,8 +53,8 @@ thread.append(empty);
 const BUTTONS: Partial<Record<Feature, { label: string; title: string; data: Record<string, string> }>> = {
   explain: { label: "Explain line", title: `Explain the line the cursor is on, on its own (${keys("X")})`, data: { action: "standalone", request: "explain" } },
   translate: { label: "Translate", title: "Translate the selected pseudocode into code, in the file's language", data: { action: "standalone", request: "translate" } },
-  check: { label: "Check function", title: "Check the function the cursor is in against its documentation and the tests that call it", data: { action: "standalone", request: "check" } },
-  fill: { label: "Fill in function", title: "Write the body of the function the cursor is in, from its documentation and the tests that call it", data: { action: "standalone", request: "fill" } },
+  check: { label: "Check function", title: "Check the function or method the cursor is in against its documentation and the tests that call it", data: { action: "standalone", request: "check" } },
+  fill: { label: "Fill in function", title: "Write the body of the function or method the cursor is in, from its documentation and the tests that call it", data: { action: "standalone", request: "fill" } },
   reviewFile: { label: "Review my changes", title: "Review what you have changed in the file in the editor since the last commit: what else your change calls for", data: { action: "review", scope: "file" } },
   tour: { label: "Tour this codebase", title: "A tour of how this codebase is structured", data: { action: "start-tour" } },
   reviewAll: { label: "Review all changes", title: "Review everything you have changed in the workspace since the last commit", data: { action: "review", scope: "all" } },
@@ -77,7 +77,18 @@ const modesGroup = h("div", { className: "modes", role: "group", "aria-label": "
 const statusText = h("span", { id: "status" });
 const sendButton = h("button", { id: "send", className: "primary" }, "Send");
 const backendButton = h("button", { id: "backend", className: "link-button", title: "Choose another model" });
-const composer = h("footer", { id: "composer" }, levelsBox, chipsRow, input, h("div", { id: "controls" }, modesGroup, statusText, sendButton), backendButton);
+// Which level Worsley is at, and the choice of another, beside the choice of model.
+const levelSelect = h("select", { id: "level", "aria-label": "Level", title: "Worsley's level: each offers what the one below it does, and more" });
+const levelChoice = h("label", { className: "level-choice", hidden: true }, "Level", levelSelect);
+const composer = h(
+  "footer",
+  { id: "composer" },
+  levelsBox,
+  chipsRow,
+  input,
+  h("div", { id: "controls" }, modesGroup, statusText, sendButton),
+  h("div", { id: "footer-row" }, backendButton, levelChoice),
+);
 app.append(tourBar, thread, composer);
 
 // ---- State
@@ -511,7 +522,7 @@ function drawEmpty(): void {
       h(
         "p",
         {},
-        "Put the cursor in a function and press ",
+        "Put the cursor in a function or method and press ",
         h("em", {}, "Check function"),
         ": Worsley reads its code against its docstring and the tests that call it, and says where they don't fit.",
       ),
@@ -522,7 +533,7 @@ function drawEmpty(): void {
       h(
         "p",
         {},
-        "Write a function's header, its docstring and tests that call it, then press ",
+        "Write the header and docstring of a function or method, and tests that call it, then press ",
         h("em", {}, "Fill in function"),
         ": Worsley writes a body that does what they say, and nothing more. The tests can start as pseudocode, translated.",
       ),
@@ -662,6 +673,15 @@ for (const button of modeButtons) {
   });
 }
 backendButton.addEventListener("click", () => send({ type: "pickBackend" }));
+levelSelect.addEventListener("change", () => {
+  send({ type: "setLevel", level: levelSelect.value === "N" ? "N" : Number(levelSelect.value) });
+});
+
+/** The choice of level: every level there is, the one Worsley is at chosen. */
+function drawLevelChoice(level: number | "N", choices: { level: number | "N"; name: string }[]): void {
+  levelSelect.replaceChildren(...choices.map((choice) => h("option", { value: String(choice.level), selected: choice.level === level }, `${choice.level} · ${choice.name}`)));
+  levelChoice.hidden = choices.length === 0;
+}
 
 // ---- Clicks anywhere
 
@@ -805,6 +825,7 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
     case "level":
       features = new Set(message.features);
       sections = message.sections;
+      drawLevelChoice(message.level, message.choices);
       applyFeatures();
       return;
   }

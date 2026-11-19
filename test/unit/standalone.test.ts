@@ -14,7 +14,7 @@ import {
   testAround,
   type Excerpt,
 } from "../../src/core/functions";
-import { featuresAt, LEVEL_N, levelOf, notAtLevel, NUMBERED, sectionsAt, type LevelName } from "../../src/core/levels";
+import { featuresAt, LEVEL_CHOICES, LEVEL_N, levelOf, notAtLevel, NUMBERED, sectionsAt, type LevelName } from "../../src/core/levels";
 import {
   CHECK_SYSTEM,
   checkRequest,
@@ -43,17 +43,24 @@ describe("the levels", () => {
   it("group what they offer by the level each thing comes at, for the panel's buttons", () => {
     assert.deepEqual(sectionsAt(2), [
       { level: 1, name: "Syntax", features: ["explain", "translate"] },
-      { level: 2, name: "Functions", features: ["check", "fill"] },
+      { level: 2, name: "Specs", features: ["check", "fill"] },
     ]);
     assert.deepEqual(
       sectionsAt("N").map((s) => [s.level, s.name]),
       [
         [1, "Syntax"],
-        [2, "Functions"],
+        [2, "Specs"],
         [3, "Changes"],
         ["N", "Everything"],
       ],
     );
+    // The panel's choice of level offers every one, whatever the level is now.
+    assert.deepEqual(LEVEL_CHOICES, [
+      { level: 1, name: "Syntax" },
+      { level: 2, name: "Specs" },
+      { level: 3, name: "Changes" },
+      { level: "N", name: "Everything" },
+    ]);
   });
 
   it("each offer what the one below offers, and more", () => {

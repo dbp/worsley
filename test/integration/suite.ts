@@ -410,7 +410,7 @@ async function levelThree(session: WorsleyApi["session"], posted: HostMessage[])
   );
   assert.deepEqual(
     heard.sections.map((s) => `${s.level} ${s.name}: ${s.features.join(", ")}`),
-    ["1 Syntax: explain, translate", "2 Functions: check, fill", "3 Changes: reviewFile"],
+    ["1 Syntax: explain, translate", "2 Specs: check, fill", "3 Changes: reviewFile"],
   );
   await vscode.commands.executeCommand("worsley.reviewAll");
   await vscode.commands.executeCommand("worsley.ask", "What does this do?");
@@ -425,11 +425,35 @@ async function levelThree(session: WorsleyApi["session"], posted: HostMessage[])
   const sent = [...session.snapshot.messages].reverse().find((m) => m.role === "user")?.content ?? "";
   assert.match(sent, /<diff>\ndiff --git a\/src\/cart\.js b\/src\/cart\.js\n/, "the review went with the file's diff");
 
+  // The panel's choice of level sets it where it is set: for the workspace,
+  // where level 3 is set now, as a course would set it; and for the user when
+  // nothing else sets it.
+  const where = (): { workspace: unknown; user: unknown } => {
+    const inspected = vscode.workspace.getConfiguration("worsley").inspect("level");
+    return { workspace: inspected?.workspaceValue, user: inspected?.globalValue };
+  };
+  const lastLevel = (): Extract<HostMessage, { type: "level" }> | undefined => posted.filter((m): m is Extract<HostMessage, { type: "level" }> => m.type === "level").at(-1);
+  await session.setLevel(2);
+  assert.deepEqual(where(), { workspace: 2, user: undefined });
+  await waitFor("the panel to hear of level 2", () => lastLevel()?.level === 2);
   await config.update("level", undefined, vscode.ConfigurationTarget.Workspace);
-  const all = await waitFor("the panel to hear of level N", () => posted.find((m): m is Extract<HostMessage, { type: "level" }> => m.type === "level" && m.level === "N"));
+  await session.setLevel(1);
+  assert.deepEqual(where(), { workspace: undefined, user: 1 });
+  await session.setLevel("N");
+  assert.deepEqual(where(), { workspace: undefined, user: "N" });
+  await vscode.workspace.getConfiguration("worsley").update("level", undefined, vscode.ConfigurationTarget.Global);
+
+  const all = await waitFor("the panel to hear of level N", () => {
+    const last = lastLevel();
+    return last?.level === "N" ? last : undefined;
+  });
   assert.equal(all.features.length, 9);
   assert.deepEqual(
     all.sections.map((s) => s.level),
     [1, 2, 3, "N"],
+  );
+  assert.deepEqual(
+    all.choices.map((c) => `${c.level} ${c.name}`),
+    ["1 Syntax", "2 Specs", "3 Changes", "N Everything"],
   );
 }

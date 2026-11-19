@@ -142,9 +142,10 @@ export type HostMessage =
   | { type: "focus"; mode?: Mode; text?: string }
   /**
    * What Worsley offers at its level, which the panel shows and nothing
-   * else: every feature, and the levels up to this one, each with what it adds.
+   * else: every feature, and the levels up to this one, each with what it
+   * adds; and every level there is, for the panel's choice of level.
    */
-  | { type: "level"; level: number | "N"; features: Feature[]; sections: LevelSection[] };
+  | { type: "level"; level: number | "N"; features: Feature[]; sections: LevelSection[]; choices: Omit<LevelSection, "features">[] };
 
 export type PanelMessage =
   | { type: "ready" }
@@ -168,4 +169,6 @@ export type PanelMessage =
   /** A request that stands alone, about what the editor has selected. */
   | { type: "standalone"; request: Standalone }
   /** A review of the user's uncommitted changes, to the file in the editor or to all of them. */
-  | { type: "review"; scope: "file" | "all" };
+  | { type: "review"; scope: "file" | "all" }
+  /** The user chose another level in the panel. */
+  | { type: "setLevel"; level: number | "N" };

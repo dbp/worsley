@@ -852,9 +852,34 @@ button.copy:hover {
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+/* The choice of model, and of level. */
+#footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.level-choice {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.level-choice select {
+  font: inherit;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border, var(--border));
+  border-radius: 2px;
+  padding: 1px 2px;
+}
+
 #backend {
-  align-self: flex-start;
-  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

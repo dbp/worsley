@@ -93,9 +93,9 @@
       },
       {
         "command": "worsley.newThread",
-        "title": "New Thread",
+        "title": "Clear Thread",
         "category": "Worsley",
-        "icon": "$(add)"
+        "icon": "$(trash)"
       },
       {
         "command": "worsley.stop",
@@ -406,13 +406,13 @@
           ],
           "enumItemLabels": [
             "1: Syntax",
-            "2: Functions",
+            "2: Specs",
             "3: Changes",
             "N: Everything"
           ],
           "markdownEnumDescriptions": [
             "**Explain This Line**, which explains one line of code on its own, and **Translate Into Code**, which turns pseudocode into code without adding to it.",
-            "Level 1, with **Check This Function**, which reads a function against its docstring and the tests that call it, and **Fill In This Function**, which writes its body from them.",
+            "Level 1, with **Check This Function**, which reads a function or method against its docstring and the tests that call it, and **Fill In This Function**, which writes its body from them.",
             "Level 2, with **Review My Changes to This File**, which says what else in the program a change to the file in the editor calls for.",
             "Everything: asking about the code, changing it, tours and reviews of all your changes, besides what the numbered levels offer."
           ],

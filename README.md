@@ -63,7 +63,9 @@ workspace, in the `.vscode/settings.json` of the project its students start
 from. The menus, keybindings, command palette and panel show only what the
 level offers. The panel's buttons are grouped by level, a row for each,
 labelled with its number and name, so that a student sees what each level
-added.
+added. *Level*, at the bottom of the panel beside the model, chooses
+another: it sets `worsley.level` where it is set now, for the workspace if
+a course set it there, and otherwise for the user.
 
 The requests of levels 1 and 2 each stand alone: the model sees only the
 code a request is about, not the rest of the file, nor the thread, and has
@@ -88,12 +90,13 @@ changes nothing.
     high"), is to stay as you wrote it, with the reply saying what it would
     need to be a step. How well a model keeps to this varies, and
     `pnpm run live:translate` measures it (see Layout).
-- **Level 2** works on whole functions: reading one against what it is
-  meant to do, and writing one from that. Both see the function, with the
-  comments or decorators above it, and the tests that call it: test
+- **Level 2**, *Specs*, works on a function or method and its spec, its
+  docstring and tests: reading the code against them, and writing it from
+  them. Both see the function, with the comments or decorators above it,
+  and the tests that call it: test
   functions, or lines of tests such as an `assert` at the end of a file,
   that the language server's references or a search for calls by name find.
-  - **Check a function.** Put the cursor in a function and choose **Check
+  - **Check a function.** Put the cursor in a function or method and choose **Check
     This Function** (*Check function* in the panel). It is read against its
     docstring and its tests, starting with a verdict, **They fit.** or
     **They don't fit.**, then each thing that doesn't: the code doing other
@@ -166,7 +169,7 @@ backend; the thread carries on with whichever model answers next.
 | --- | --- |
 | `worsley.backends` | The endpoints: `name`, `baseUrl`, `model`, and optionally `apiKeyEnv`, the environment variable holding its key (a backend that names one is used only with a key; any other is sent one only if **Worsley: Set API Key…** has stored it), `headers`, `extraBody`, which is merged into every request, such as `{"chat_template_kwargs": {"enable_thinking": false}}` to turn a Qwen model's thinking off, or `{"provider": {"sort": "throughput"}}` for OpenRouter, and `changeExtraBody`, merged over `extraBody` for Change requests only, such as `{"chat_template_kwargs": {"enable_thinking": true}}` (the `local` default) or OpenRouter's `{"reasoning": {"effort": "medium"}}`, and `contextTokens`, the model's context window, for a server that doesn't report it. User settings only, so a workspace can't send your code elsewhere. |
 | `worsley.backend` | Which of them is in use. |
-| `worsley.level` | How much of Worsley there is (see Levels): 1, explaining a line and translating pseudocode; 2, checking and filling in functions as well; 3, reviewing the changes to a file as well; `"N"`, everything (the default). A number with no level of its own yet is the highest numbered level below it. |
+| `worsley.level` | How much of Worsley there is (see Levels): 1, explaining a line and translating pseudocode; 2, checking and filling in functions and methods as well; 3, reviewing the changes to a file as well; `"N"`, everything (the default). A number with no level of its own yet is the highest numbered level below it. |
 | `worsley.testCommand` | The workspace's test command, such as `pytest -q`. It runs without asking. Empty: the model works out how the tests run, and each command needs approval. |
 | `worsley.commandTimeoutSeconds` | When a command is stopped (600). |
 | `worsley.context.maxFileLines` | Visible files up to this long are sent whole (600); longer ones as the lines on screen and 40 either side. |
@@ -242,7 +245,9 @@ clears down to well under the limit, so as not to need to again soon.
 
 The thread outlasts a reload or a restart of VS Code: it is kept in VS
 Code's storage for the workspace, after each request and as the window
-closes, and **Worsley: New Thread** clears it. A request that a reload cuts
+closes, and **Worsley: Clear Thread** (the trash can at the top of the
+panel) clears it for good: there is one thread per workspace, and no list of
+old ones to go back to. A request that a reload cuts
 off stops where it got to, as *Stop* would leave it, and "go on" picks it
 up.
 

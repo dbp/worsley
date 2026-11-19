@@ -149,3 +149,13 @@ export function level(): LevelName {
 export function features(): ReadonlySet<Feature> {
   return featuresAt(level());
 }
+
+/**
+ * Puts Worsley at `chosen`, where the level is set now: for the workspace,
+ * if a course set it there, so that the choice takes effect over it, and
+ * otherwise for the user.
+ */
+export async function setLevel(chosen: LevelName): Promise<void> {
+  const inWorkspace = config().inspect("level")?.workspaceValue !== undefined;
+  await config().update("level", levelOf(chosen), inWorkspace ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+}

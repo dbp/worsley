@@ -18,13 +18,17 @@
   // As core/levels.ts has them.
   const levels = [
     { level: 1, name: "Syntax", features: ["explain", "translate"] },
-    { level: 2, name: "Functions", features: ["check", "fill"] },
+    { level: 2, name: "Specs", features: ["check", "fill"] },
     { level: 3, name: "Changes", features: ["reviewFile"] },
     { level: "N", name: "Everything", features: ["ask", "change", "tour", "reviewAll"] },
   ];
-  const sections = level === "N" ? levels : levels.slice(0, Number(level));
-  const features = sections.flatMap((section) => section.features);
-  const files = ["src/shop/cart.py", "src/shop/pricing.py", "src/shop/cli.py", "tests/test_cart.py", "README.md", "shipping.py", "test_shipping.py", "stats.py", "test_stats.py"];
+  const choices = levels.map(({ level: n, name }) => ({ level: n, name }));
+  /** The level message for `n`, as the extension sends it. */
+  const levelMessage = (n) => {
+    const sections = n === "N" ? levels : levels.slice(0, Number(n));
+    return { type: "level", level: n === "N" ? "N" : Number(n), features: sections.flatMap((s) => s.features), sections, choices };
+  };
+  const files =["src/shop/cart.py", "src/shop/pricing.py", "src/shop/cli.py", "tests/test_cart.py", "README.md", "shipping.py", "test_shipping.py", "stats.py", "test_stats.py"];
   const post = (message) => window.postMessage(message, "*");
   const sent = [];
   window.worsleySent = sent;
@@ -34,6 +38,9 @@
       sent.push(message);
       if (message.type === "ready") {
         setTimeout(play, 0);
+      } else if (message.type === "setLevel") {
+        // As the setting changing would.
+        post(levelMessage(message.level));
       } else if (message.type === "checkLinks") {
         const statuses = {};
         for (const href of message.hrefs) {
@@ -225,7 +232,7 @@
   ];
 
   function play() {
-    post({ type: "level", level: level === "N" ? "N" : Number(level), features, sections });
+    post(levelMessage(level));
     if (scene === "functions") {
       post({ type: "backend", label: "deepseek/deepseek-v4.1-flash-1017 · openrouter", tooltip: "https://openrouter.ai/api/v1" });
       post({ type: "reset", items: functions, tour: undefined, busy: false, status: "" });

@@ -21,7 +21,7 @@ import {
   type LineRange,
 } from "../core/functions";
 import { isGitRepo, uncommittedChanges, uncommittedDiff } from "../core/git";
-import { ALL_FEATURES, notAtLevel, sectionsAt } from "../core/levels";
+import { ALL_FEATURES, LEVEL_CHOICES, notAtLevel, sectionsAt, type LevelName } from "../core/levels";
 import { foldersOf, formatHref, labelRef, parseCodeRef, resolvePath, type CodeRef } from "../core/links";
 import { workspacePath } from "../core/paths";
 import { reviewRequest, reviewTitle, systemPrompt, tourStepRequest, userRequest, WALK_CHANGES } from "../core/prompts";
@@ -190,6 +190,15 @@ export class Session implements vscode.Disposable {
     }
     this.add<"notice">({ kind: "notice", level: "info", text: notAtLevel(feature, settings.level()) });
     return false;
+  }
+
+  /** Puts Worsley at another level, as chosen in the panel; the panel hears of it as the setting changes. */
+  async setLevel(level: LevelName): Promise<void> {
+    try {
+      await settings.setLevel(level);
+    } catch (err) {
+      this.add<"notice">({ kind: "notice", level: "error", text: `Couldn't change the level: ${errorText(err)}` });
+    }
   }
 
   private currentWorkspace(): EditorWorkspace | undefined {
@@ -742,7 +751,7 @@ export class Session implements vscode.Disposable {
       found = (outline !== undefined ? functionAt(outline, editor.selection.active.line + 1) : undefined) ?? pythonFunctionAt(lines, editor.selection.active.line + 1);
     }
     if (found === undefined) {
-      return notice("Put the cursor in a function, or select the whole of one, and try again.");
+      return notice("Put the cursor in a function or method, or select the whole of one, and try again.");
     }
     const start = docStart(lines, found.start);
     const fn: Excerpt = { path, start, lines: lines.slice(start - 1, found.end) };
@@ -1393,7 +1402,7 @@ export class Session implements vscode.Disposable {
       void vscode.commands.executeCommand("setContext", `worsley.feature.${feature}`, offered.has(feature));
     }
     const level = settings.level();
-    this.post({ type: "level", level, features: [...offered], sections: sectionsAt(level) });
+    this.post({ type: "level", level, features: [...offered], sections: sectionsAt(level), choices: [...LEVEL_CHOICES] });
   }
 
   private postBackend(): void {

@@ -4,9 +4,9 @@ import type { Feature, LevelSection } from "../protocol";
  * Worsley's levels, for a course that brings its help in a little at a
  * time. Each level offers what the one before it does, and more. Level 1
  * teaches how code is written: explaining one line on its own, and
- * translating pseudocode into code without adding to it. Level 2 works on
- * whole functions: checking one against its documentation and tests, and
- * writing a body from them. Level 3 works on a change to a file: what else
+ * translating pseudocode into code without adding to it. Level 2 works on a
+ * function or method and its spec, its documentation and tests: checking it
+ * against them, and writing its body from them. Level 3 works on a change to a file: what else
  * in the program it calls for, so that a change to a design made in one
  * place can be finished everywhere. Level N, the last, offers everything
  * else, and leaves room for numbered levels before it as a course needs them.
@@ -25,7 +25,7 @@ export interface Level {
 /** The numbered levels, level 1 first. */
 export const NUMBERED: readonly Level[] = [
   { name: "Syntax", adds: ["explain", "translate"] },
-  { name: "Functions", adds: ["check", "fill"] },
+  { name: "Specs", adds: ["check", "fill"] },
   { name: "Changes", adds: ["reviewFile"] },
 ];
 
@@ -56,11 +56,14 @@ export function featuresAt(level: LevelName): ReadonlySet<Feature> {
 /** Every feature, as level N offers them. */
 export const ALL_FEATURES: ReadonlySet<Feature> = featuresAt("N");
 
+/** Every level, by number and name, for a choice among them. */
+export const LEVEL_CHOICES: readonly Omit<LevelSection, "features">[] = sectionsAt("N").map(({ level, name }) => ({ level, name }));
+
 const FEATURE_NAMES: Record<Feature, string> = {
   explain: "explaining a line",
   translate: "translating pseudocode",
-  check: "checking a function against its documentation and tests",
-  fill: "filling in a function",
+  check: "checking a function or method against its documentation and tests",
+  fill: "filling in a function or method",
   reviewFile: "reviewing your changes to a file",
   ask: "asking about the code",
   change: "changing the code",
