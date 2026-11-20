@@ -169,10 +169,9 @@ pnpm run vsce:package
 code --install-extension worsley-0.1.1.vsix
 ```
 
-The `local` backend expects llama.cpp on `http://127.0.0.1:8080/v1`, such as
-the router in `~/opt/llama.cpp/router.sh`, and asks for
-`Qwen3.6-35B-A3B-Q4_K_M`, thinking only when it changes code. For OpenRouter, run **Worsley:
-Set API Key…** (or set `OPENROUTER_API_KEY` before starting VS Code), then
+The `local` backend expects llama.cpp on `http://127.0.0.1:8080/v1`. 
+For OpenRouter, run **Worsley: Set API Key…** (or set `OPENROUTER_API_KEY` 
+before starting VS Code), then
 **Worsley: Choose Model…**, which lists the server's models: for llama.cpp,
 its presets; for OpenRouter, the models that take tools. It lists first the
 last six models you have used, each with its backend, so that going back to

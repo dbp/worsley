@@ -1,4 +1,4 @@
-# Only dist/, media/, package.json, README.md and LICENSE ship.
+# Only dist/, media/, package.json, README.md, CHANGELOG.md and LICENSE ship.
 .vscode/**
 .vscode-test/**
 .gitignore
